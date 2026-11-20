@@ -32,8 +32,21 @@ def make_thumbnail(video: Path, out: Path, at_s: float = 1.0) -> bool:
     exe = shutil.which("ffmpeg")
     if not exe:
         return False
-    cmd = [exe, "-y", "-v", "error", "-ss", f"{at_s}", "-i", str(video),
-           "-frames:v", "1", "-q:v", "3", str(out)]
+    cmd = [
+        exe,
+        "-y",
+        "-v",
+        "error",
+        "-ss",
+        f"{at_s}",
+        "-i",
+        str(video),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "3",
+        str(out),
+    ]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         subprocess.run(cmd, check=True, timeout=60, creationflags=flags)
@@ -136,7 +149,9 @@ async def _respond(builder, ident: str) -> FileResponse:
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return FileResponse(
-        dest, media_type="application/zip", filename=filename,
+        dest,
+        media_type="application/zip",
+        filename=filename,
         background=BackgroundTask(lambda: dest.unlink(missing_ok=True)),
     )
 

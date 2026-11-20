@@ -24,6 +24,7 @@ from typing import Any
 
 from .. import activity
 from ..providers.base import DetectionConfig, extract_json_object, load_prompt
+from . import hooks
 from .captions import HOOK_DURATION_S
 from .scoring import _NUMBER
 from .transcript import Word
@@ -165,11 +166,10 @@ def _snap(t: float | None, words: list[Word]) -> float | None:
 
 
 def _clean_hook(text: Any) -> str:
-    text = " ".join(str(text or "").split())
-    parts = text.split()
-    if len(parts) > HOOK_MAX_WORDS:
-        text = " ".join(parts[:HOOK_MAX_WORDS]).rstrip(",;:-")
-    return text[:70]
+    """The hook, or "" when it is over-long / cut off (never truncated: the caller
+    falls back to another hook)."""
+    # Generic bait is handled later (hooks.ensure_specific_hook); structure only here.
+    return hooks.clean_hook(str(text or ""), allow_generic=True)
 
 
 def _is_emoji(char: Any) -> bool:

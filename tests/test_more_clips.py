@@ -62,8 +62,13 @@ class TestPromptInjection:
         existing = [
             _clip(0, 30, start_word=10, end_word=90, title="Good one"),
             _clip(
-                40, 70, start_word=120, end_word=200, title="Promo clip",
-                status="discarded", reject_reason="ad_or_announcement",
+                40,
+                70,
+                start_word=120,
+                end_word=200,
+                title="Promo clip",
+                status="discarded",
+                reject_reason="ad_or_announcement",
             ),  # fmt: skip
             _clip(900, 950, start_word=9000, end_word=9100),  # outside window
         ]
@@ -141,7 +146,8 @@ class TestRejectReason:
 class TestBriefAndMoreEndpoint:
     def test_brief_stored_with_job_and_truncated(self, client, done_job) -> None:
         r = client.post(
-            "/api/jobs", json={"source_id": done_job.source_id, "brief": "b" * (BRIEF_MAX_CHARS + 1000)}
+            "/api/jobs",
+            json={"source_id": done_job.source_id, "brief": "b" * (BRIEF_MAX_CHARS + 1000)},
         )
         assert r.status_code == 201
         assert len(r.json()["brief"]) == BRIEF_MAX_CHARS

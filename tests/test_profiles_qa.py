@@ -15,7 +15,9 @@ from clipstudio.pipeline.transcript import Word
 TODAY = date(2026, 11, 19)
 
 
-def words_from(text: str, step: float = 0.3, gap_after: dict[int, float] | None = None) -> list[Word]:
+def words_from(
+    text: str, step: float = 0.3, gap_after: dict[int, float] | None = None
+) -> list[Word]:
     out, t = [], 0.0
     for i, w in enumerate(text.split()):
         out.append(Word(w, t, t + step * 0.9))
@@ -135,7 +137,9 @@ class TestFilmCaptions:
         assert len(texts) >= 3  # sentence end + pause split
 
     def test_max_two_lines_and_balanced(self) -> None:
-        lines = captions.balanced_lines("We ride at dawn and nobody follows us home".split(), 34)
+        lines = captions.balanced_lines(
+            ["We", "ride", "at", "dawn", "and", "nobody", "follows", "us", "home"], 34
+        )
         assert len(lines) == 2
 
     def test_build_ass_sentence_case_no_box_no_colour(self) -> None:
@@ -155,7 +159,9 @@ class TestFilmCaptions:
         assert first.end - first.start >= 800
 
     def test_two_line_limit_in_events(self) -> None:
-        words = words_from("a " * 5 + "long sentence that keeps going and going without any stop at all")
+        words = words_from(
+            "a " * 5 + "long sentence that keeps going and going without any stop at all"
+        )
         for e in _film_ass(words).events:
             assert e.text.count("\\N") <= 1
 
@@ -224,19 +230,28 @@ class _FakeProvider:
 class TestHooks:
     def test_generic_hooks_rejected(self) -> None:
         for h in (
-            "Ready for a wild twist?", "Can you believe this?", "You won't believe this",
-            "Wait for it", "Watch till the end", "This is crazy", "Wow", "", "What just happened?",
+            "Ready for a wild twist?",
+            "Can you believe this?",
+            "You won't believe this",
+            "Wait for it",
+            "Watch till the end",
+            "This is crazy",
+            "Wow",
+            "",
+            "What just happened?",
         ):
             assert hooks.is_generic_hook(h), h
 
     def test_specific_hooks_pass(self) -> None:
         for h in (
-            "The sheriff draws first and misses", "This mistake cost me $40,000", "Quanah Parker rides in",
+            "The sheriff draws first and misses",
+            "This mistake cost me $40,000",
+            "Quanah Parker rides in",
         ):
             assert not hooks.is_generic_hook(h), h
 
-    def test_clamp_to_eight_words(self) -> None:
-        assert len(hooks.clamp_hook("one two three four five six seven eight nine ten").split()) == 8
+    def test_long_hooks_are_rejected_not_clamped(self) -> None:
+        assert hooks.clean_hook("one two three four five six seven eight nine ten") == ""
 
     def test_ensure_regenerates_then_falls_back(self) -> None:
         import asyncio
@@ -256,7 +271,9 @@ class TestHooks:
         )
         assert how == "title" and hook == "The Ambush at Dawn"
         hook, how = asyncio.run(
-            hooks.ensure_specific_hook("Parker spares the scout", provider=None, title="t", transcript="")
+            hooks.ensure_specific_hook(
+                "Parker spares the scout", provider=None, title="t", transcript=""
+            )
         )
         assert how == "kept"
 
@@ -292,7 +309,17 @@ class TestBriefGuarantees:
     def test_hashtag_cleanup(self) -> None:
         tags = campaign.clean_hashtags(
             ["#Brand", "#brand", "#Film"],
-            ["#ab", "#butt", "#Film", "#western", "#western", "#12345", "#cinema", "#history", "#epic"],
+            [
+                "#ab",
+                "#butt",
+                "#Film",
+                "#western",
+                "#western",
+                "#12345",
+                "#cinema",
+                "#history",
+                "#epic",
+            ],
             max_topical=3,
         )
         assert tags == ["#Brand", "#Film", "#western", "#cinema", "#history"]
@@ -301,13 +328,17 @@ class TestBriefGuarantees:
         rules = campaign.CampaignRules(
             required_hashtags=["#Movie"], required_caption_text=["Out now on digital"]
         )
-        desc, tags = campaign.merge_metadata(rules, "Great scene.", ["#shorts", "#x"], max_topical=3)
+        desc, tags = campaign.merge_metadata(
+            rules, "Great scene.", ["#shorts", "#x"], max_topical=3
+        )
         assert "Out now on digital" in desc and tags[0] == "#Movie"
         assert campaign.validate_metadata(rules, desc, tags) == []
         assert len(campaign.validate_metadata(rules, "nothing", [])) == 2
 
     def test_enforce_fixes_clip(self) -> None:
-        rules = campaign.CampaignRules(required_hashtags=["#Movie"], required_caption_text=["Out now"])
+        rules = campaign.CampaignRules(
+            required_hashtags=["#Movie"], required_caption_text=["Out now"]
+        )
         clip = SimpleNamespace(description="Hi", hashtags=["#a1b"])
         campaign.enforce_metadata(rules, clip)
         assert campaign.validate_metadata(rules, clip.description, clip.hashtags) == []
@@ -355,7 +386,10 @@ class TestVocabulary:
 
     def test_names_from_descriptions(self) -> None:
         names = vocabulary.names_from_descriptions(
-            ["A rider on a horse. A caption reads 'QUANAH PARKER'.", "Close shot of Ryan Gosling smiling"]
+            [
+                "A rider on a horse. A caption reads 'QUANAH PARKER'.",
+                "Close shot of Ryan Gosling smiling",
+            ]
         )
         assert any("Quanah" in n for n in names) and "Ryan Gosling" in names
 
@@ -433,7 +467,9 @@ class TestCoordinatorFixes:
 
     def test_near_duplicate_hashtag_dropped(self) -> None:
         tags = campaign.clean_hashtags(
-            ["#OnceUponATimeInTexas"], ["#shorts", "#onceuponatimeinttexas", "#shorts", "#western"], 4
+            ["#OnceUponATimeInTexas"],
+            ["#shorts", "#onceuponatimeinttexas", "#shorts", "#western"],
+            4,
         )
         assert tags == ["#OnceUponATimeInTexas", "#shorts", "#western"]
 
@@ -455,7 +491,9 @@ class TestDescriptionEndsWithHashtags:
         assert campaign.with_hashtags(once, ["#A", "#C"]).endswith("\n\n#A #C")
 
     def test_enforce_appends_once_and_stays_in_sync(self) -> None:
-        rules = campaign.CampaignRules(required_hashtags=["#Movie"], required_caption_text=["Out now"])
+        rules = campaign.CampaignRules(
+            required_hashtags=["#Movie"], required_caption_text=["Out now"]
+        )
         clip = SimpleNamespace(description="Nice.", hashtags=["#x1y"])
         campaign.enforce_metadata(rules, clip)
         campaign.enforce_metadata(rules, clip)

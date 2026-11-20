@@ -423,8 +423,13 @@ class TestWideAndNoFaceFit:
             tracks.append(t)
         crop_w, crop_h = croppath.target_crop_size(self.SRC_W, self.SRC_H, 9, 16)
         return _wide_segment(
-            tracks, start_s=0.0, end_s=2.0, source_w=self.SRC_W, source_h=self.SRC_H,
-            crop_w=crop_w, crop_h=crop_h,
+            tracks,
+            start_s=0.0,
+            end_s=2.0,
+            source_w=self.SRC_W,
+            source_h=self.SRC_H,
+            crop_w=crop_w,
+            crop_h=crop_h,
         )
 
     def test_two_faces_at_edges_fit(self):
@@ -442,7 +447,11 @@ class TestWideAndNoFaceFit:
 
         crop_w, crop_h = croppath.target_crop_size(self.SRC_W, self.SRC_H, 9, 16)
         seg = _general_segment(
-            start_s=0.0, end_s=3.0, source_w=self.SRC_W, source_h=self.SRC_H,
-            crop_w=crop_w, crop_h=crop_h,
+            start_s=0.0,
+            end_s=3.0,
+            source_w=self.SRC_W,
+            source_h=self.SRC_H,
+            crop_w=crop_w,
+            crop_h=crop_h,
         )
         assert seg.fit is True

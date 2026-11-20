@@ -92,9 +92,7 @@ def build_provider(name: str | None = None, settings: Settings | None = None) ->
         if groq_model and groq_key:
             nvidia_key, nvidia_url = api_key, provider_settings.base_url
             provider = provider_cls(groq_model, api_key=groq_key, base_url=GROQ_BASE_URL)
-            provider.fallback_model = (
-                os.environ.get("NVIDIA_FALLBACK_MODEL") or model
-            )
+            provider.fallback_model = os.environ.get("NVIDIA_FALLBACK_MODEL") or model
             provider.fallback_api_key = nvidia_key
             provider.fallback_base_url = nvidia_url
             provider.primary_retries = 2

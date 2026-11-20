@@ -99,7 +99,12 @@ async def retry(item_id: str) -> dict:
     if item.status not in ("failed", "cancelled"):
         raise HTTPException(status_code=409, detail="Only failed or cancelled items can retry.")
     await asyncio.to_thread(
-        bq.update_item, item_id, status="pending", error=None, progress=0,
-        job_id=None, source_id=None,
+        bq.update_item,
+        item_id,
+        status="pending",
+        error=None,
+        progress=0,
+        job_id=None,
+        source_id=None,
     )
     return await asyncio.to_thread(_out)

@@ -51,7 +51,7 @@ class Profile:
     progress_bar: bool = True
     hook_card: bool = True
     hook_style: str = "plain"
-    hook_duration_s: float = 4.5
+    hook_duration_s: float = 2.8
     layout_mode: str = "auto"
     hashtag_count: int = 4
 
@@ -129,9 +129,17 @@ def choose_profile(
     )
 
 
-def apply_to_edit(profile: Profile, edit: Any, explicit: set[str] | frozenset[str] = frozenset()) -> None:
+def apply_to_edit(
+    profile: Profile, edit: Any, explicit: set[str] | frozenset[str] = frozenset()
+) -> None:
     """Set the profile's edit switches on ``settings.edit`` (skipping explicit ones)."""
-    for name in ("trim_silence", "remove_fillers", "punch_zoom", "keyword_emphasis", "progress_bar"):
+    for name in (
+        "trim_silence",
+        "remove_fillers",
+        "punch_zoom",
+        "keyword_emphasis",
+        "progress_bar",
+    ):
         if name not in explicit:
             setattr(edit, name, getattr(profile, name))
 

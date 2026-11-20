@@ -9,10 +9,18 @@ from clipstudio.jobs import batch as bq
 LISTING = {
     "channel": "TED",
     "entries": [
-        {"id": "long1", "title": "A great talk", "duration": 900,
-         "url": "https://www.youtube.com/watch?v=long1"},
-        {"id": "short1", "title": "Quick", "duration": 30,
-         "url": "https://www.youtube.com/shorts/short1"},
+        {
+            "id": "long1",
+            "title": "A great talk",
+            "duration": 900,
+            "url": "https://www.youtube.com/watch?v=long1",
+        },
+        {
+            "id": "short1",
+            "title": "Quick",
+            "duration": 30,
+            "url": "https://www.youtube.com/shorts/short1",
+        },
         {"id": "live1", "title": "Live now", "duration": None, "live_status": "is_live"},
         {"id": "long2", "title": "Sponsored: ad", "duration": 600},
         {"id": "huge", "title": "Marathon", "duration": 9000},

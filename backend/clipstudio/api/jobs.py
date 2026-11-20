@@ -44,7 +44,7 @@ def _apply_overrides(settings, overrides: JobSettingsIn):
         merged.export.ratio = overrides.ratio
     for name in (
         "trim_silence", "remove_fillers", "punch_zoom", "keyword_emphasis",
-        "progress_bar", "normalize_audio", "background_music", "burn_captions",
+        "progress_bar", "normalize_audio", "background_music", "burn_captions", "teaser",
     ):  # fmt: skip
         value = getattr(overrides, name)
         if value is not None:
@@ -63,9 +63,7 @@ async def create_job(payload: JobCreateIn) -> JobOut:
     from ..providers import PROVIDERS
 
     if settings.active_provider not in PROVIDERS:
-        raise HTTPException(
-            status_code=400, detail=f"Unknown provider: {settings.active_provider}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {settings.active_provider}")
     from ..pipeline import captions as captions_module
 
     try:
@@ -95,7 +93,7 @@ async def create_job(payload: JobCreateIn) -> JobOut:
     explicit = [
         name for name in (
             "trim_silence", "remove_fillers", "punch_zoom", "keyword_emphasis",
-            "progress_bar", "normalize_audio", "background_music", "burn_captions", "caption_style",
+            "progress_bar", "normalize_audio", "background_music", "burn_captions", "teaser", "caption_style",
         )
         if getattr(payload.settings, name) not in (None, "")
     ]  # fmt: skip

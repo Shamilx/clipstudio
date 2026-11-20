@@ -174,10 +174,7 @@ class SystemReport:
     def ready(self) -> bool:
         """True when the core pipeline can run (GPU and extras are optional)."""
         return (
-            self.python_ok
-            and self.ffmpeg.usable
-            and self.deps.mediapipe
-            and self.deps.scenedetect
+            self.python_ok and self.ffmpeg.usable and self.deps.mediapipe and self.deps.scenedetect
         )
 
 

@@ -13,10 +13,15 @@ from clipstudio.templates.rules import apply_to_metadata, clamp_duration
 
 
 def test_template_rule_fields_validate():
-    t = tpl.validate({
-        "name": "camp", "max_duration_s": 9999, "required_hashtags": "foo, #Bar, foo, !!",
-        "credit_text": "Credit: @x", "watermark_text": "  ",
-    })
+    t = tpl.validate(
+        {
+            "name": "camp",
+            "max_duration_s": 9999,
+            "required_hashtags": "foo, #Bar, foo, !!",
+            "credit_text": "Credit: @x",
+            "watermark_text": "  ",
+        }
+    )
     assert t.max_duration_s == 600
     assert t.required_hashtags == ["#foo", "#Bar"]
     assert t.credit_text == "Credit: @x" and t.watermark_text is None
@@ -43,8 +48,15 @@ def _seed(tmp_path, template="auto"):
     store.create_source(src)
     job = Job(id=new_id(), source_id=src.id, provider="x", settings={"template": template})
     store.create_job(job)
-    clip = Clip(id=new_id(), job_id=job.id, start_s=1, end_s=31, title="Big Idea",
-                description="Why it matters", hashtags=["#tips"])
+    clip = Clip(
+        id=new_id(),
+        job_id=job.id,
+        start_s=1,
+        end_s=31,
+        title="Big Idea",
+        description="Why it matters",
+        hashtags=["#tips"],
+    )
     store.replace_clips(job.id, [clip])
     store.create_export(Export(id=new_id(), clip_id=clip.id, path=str(video)))
     return job, clip
@@ -59,7 +71,11 @@ def test_clip_and_job_pack(initialised_db, tmp_path, monkeypatch):
     assert name.endswith("-pack.zip")
     with zipfile.ZipFile(dest) as zf:
         assert sorted(zf.namelist()) == [
-            "big-idea.mp4", "description.txt", "meta.json", "thumbnail.jpg", "title.txt",
+            "big-idea.mp4",
+            "description.txt",
+            "meta.json",
+            "thumbnail.jpg",
+            "title.txt",
         ]
         assert zf.read("title.txt").decode().strip() == "Big Idea"
         assert "#tips" in zf.read("description.txt").decode()
@@ -73,8 +89,9 @@ def test_clip_and_job_pack(initialised_db, tmp_path, monkeypatch):
 
 def test_pack_applies_template_rules(initialised_db, tmp_path, monkeypatch):
     monkeypatch.setattr(pack, "make_thumbnail", lambda v, o, at=1.0: False)
-    tpl.save_template(tpl.validate({
-        "name": "camp", "required_hashtags": ["promo"], "credit_text": "Credit: @me"}))
+    tpl.save_template(
+        tpl.validate({"name": "camp", "required_hashtags": ["promo"], "credit_text": "Credit: @me"})
+    )
     job, clip = _seed(tmp_path, "camp")
     dest = tmp_path / "p.zip"
     pack.build_clip_pack(clip.id, dest)

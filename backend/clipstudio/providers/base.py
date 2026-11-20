@@ -340,9 +340,7 @@ def render_guidance(window: TranscriptWindow, config: DetectionConfig) -> str:
         for title, reason in config.disliked[:MAX_LISTED_DISLIKED]:
             lines.append(f'- "{title}"' + (f" ({reason})" if reason else ""))
         parts.append(
-            "## The user disliked these clips — avoid similar moments\n"
-            + "\n".join(lines)
-            + "\n"
+            "## The user disliked these clips — avoid similar moments\n" + "\n".join(lines) + "\n"
         )
 
     return "\n".join(parts)

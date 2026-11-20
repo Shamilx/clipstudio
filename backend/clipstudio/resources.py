@@ -27,7 +27,12 @@ CV2_THREADS = 4
 
 def limit_thread_env() -> None:
     """Set BLAS/OpenMP thread limits. Must run before numpy/cv2 are imported."""
-    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
         os.environ.setdefault(var, str(ANALYSIS_THREADS))
 
 

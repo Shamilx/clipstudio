@@ -104,6 +104,8 @@ class EditSettings(BaseModel):
     background_music: bool = False
     #: Burn word captions. Off for footage that already has subtitles (hook card stays).
     burn_captions: bool = True
+    #: Opt-in flash-forward: 1-1.5 s of the best moment first, then the story.
+    teaser: bool = False
     music_volume: float = 0.12
     #: A pause longer than this is shortened.
     max_pause_s: float = 0.5
@@ -111,8 +113,25 @@ class EditSettings(BaseModel):
     pause_pad_s: float = 0.14
     filler_words: list[str] = Field(
         default_factory=lambda: [
-            "um", "uh", "uhm", "umm", "er", "erm", "hmm", "mm", "mhm", "ah",
-            "ee", "eee", "əə", "əəə", "ıı", "ııı", "ммм", "эээ", "ээ",
+            "um",
+            "uh",
+            "uhm",
+            "umm",
+            "er",
+            "erm",
+            "hmm",
+            "mm",
+            "mhm",
+            "ah",
+            "ee",
+            "eee",
+            "əə",
+            "əəə",
+            "ıı",
+            "ııı",
+            "ммм",
+            "эээ",
+            "ээ",
         ]  # fmt: skip
     )
 
@@ -266,9 +285,7 @@ def get_secret(key: str, settings: Settings | None = None) -> str | None:
 
     ``key`` is a provider name for API keys, or :data:`HF_TOKEN_KEY`.
     """
-    env_override = paths.env_value(
-        f"CLIPSTUDIO_{key.upper()}_KEY", f"AUTOCLIP_{key.upper()}_KEY"
-    )
+    env_override = paths.env_value(f"CLIPSTUDIO_{key.upper()}_KEY", f"AUTOCLIP_{key.upper()}_KEY")
     if env_override:
         return env_override
     if key == GROQ_KEY and os.environ.get("GROQ_API_KEY"):

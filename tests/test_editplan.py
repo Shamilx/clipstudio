@@ -18,7 +18,9 @@ def _words(n: int = 40) -> list[Word]:
     return out
 
 
-LIMITS = editplan.TemplateLimits(zoom_strength=1.12, zoom_min_gap_s=4.0, max_emoji=1, sfx_enabled=True)
+LIMITS = editplan.TemplateLimits(
+    zoom_strength=1.12, zoom_min_gap_s=4.0, max_emoji=1, sfx_enabled=True
+)
 
 
 class TestValidate:
@@ -32,7 +34,11 @@ class TestValidate:
                 {"t": "x"},  # junk
             ],
             "emoji": [{"t": 7.0, "char": "🔥"}, {"t": 12.0, "char": "🔥"}, {"t": 8, "char": "ab"}],
-            "sfx": [{"t": 5.0, "kind": "whoosh"}, {"t": 5.5, "kind": "whoosh"}, {"t": 6, "kind": "boom"}],
+            "sfx": [
+                {"t": 5.0, "kind": "whoosh"},
+                {"t": 5.5, "kind": "whoosh"},
+                {"t": 6, "kind": "boom"},
+            ],
         }
         plan = editplan.validate_plan(raw, _words(), LIMITS, 20.0)
         assert [z["t"] for z in plan.zooms] == [5.0]
@@ -43,7 +49,9 @@ class TestValidate:
 
     def test_garbage_never_raises(self) -> None:
         assert editplan.validate_plan([1, 2], _words(), LIMITS, 20.0).zooms == []
-        assert editplan.validate_plan({"zooms": "no", "emoji": 3}, _words(), LIMITS, 20.0).emoji == []
+        assert (
+            editplan.validate_plan({"zooms": "no", "emoji": 3}, _words(), LIMITS, 20.0).emoji == []
+        )
 
     def test_sfx_disabled_by_template(self) -> None:
         limits = editplan.TemplateLimits(sfx_enabled=False)
@@ -66,7 +74,9 @@ class TestHeuristic:
                 raise RuntimeError("down")
 
         plan = asyncio.run(
-            editplan.plan_clip(_words(), 20.0, LIMITS, provider=Broken(), hook="Hook", template_name="talk")
+            editplan.plan_clip(
+                _words(), 20.0, LIMITS, provider=Broken(), hook="Hook", template_name="talk"
+            )
         )
         assert plan.source == "heuristic" and plan.template == "talk"
 
@@ -87,7 +97,9 @@ class TestHeuristic:
 def _path() -> CropPath:
     seg_fit = CropSegment(0, 5, 1920, 1080, [CropKeyframe(0, 0, 0)], Strategy.WIDE, fit=True)
     seg_track = CropSegment(5, 10, 606, 1080, [CropKeyframe(5, 700, 0)], Strategy.TRACK)
-    return CropPath(1920, 1080, [seg_fit, seg_track], speaker={"cx": 960.0, "eye_y": 400.0, "w": 200.0})
+    return CropPath(
+        1920, 1080, [seg_fit, seg_track], speaker={"cx": 960.0, "eye_y": 400.0, "w": 200.0}
+    )
 
 
 class TestLayout:
@@ -109,7 +121,7 @@ class TestLayout:
         assert top == 512 and bot == 768
         w, h, x, y = layout.face_crop(_path(), 720, bot)
         assert abs(w / h - 720 / 768) < 0.01
-        assert 0 <= x and x + w <= 1920 and 0 <= y and y + h <= 1080
+        assert x >= 0 and x + w <= 1920 and y >= 0 and y + h <= 1080
 
     def test_other_ratios_untouched(self) -> None:
         out = layout.resolve_layout(_path(), "split", 720, 720, "1:1")
@@ -147,10 +159,14 @@ class TestCaptionsAndHook:
     def test_plain_hook_duration_long_and_short_clip(self) -> None:
         hook = captions.HookSpec(text="Wait what is this")
         assert hook.style == "plain"
-        for clip_s, expected in ((30.0, 4500), (5.0, 4000)):
+        for clip_s, expected in ((30.0, 2800), (5.0, 2800), (2.5, 2000)):
             subs = captions.build_ass(
-                _words(6), captions.PRESETS["yellow_pop"], width=720, height=1280,
-                hook=hook, clip_duration_s=clip_s,
+                _words(6),
+                captions.PRESETS["yellow_pop"],
+                width=720,
+                height=1280,
+                hook=hook,
+                clip_duration_s=clip_s,
             )
             ev = [e for e in subs.events if e.style == captions.HOOK_STYLE_NAME]
             assert len(ev) == 1 and abs(ev[0].end - expected) <= 5

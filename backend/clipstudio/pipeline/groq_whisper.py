@@ -134,9 +134,7 @@ def _post_with_retry(
 
         detail = _error_detail(response)
         if response.status_code in (401, 403):
-            raise GroqError(
-                "Groq rejected the API key. Check GROQ_API_KEY in the .env file."
-            )
+            raise GroqError("Groq rejected the API key. Check GROQ_API_KEY in the .env file.")
         if response.status_code == 429 or response.status_code >= 500:
             last_error = f"{response.status_code}: {detail}"
             delay = _retry_delay(response, attempt)
@@ -243,8 +241,16 @@ def transcribe_groq(
                 # a chunk is I/O only.
                 ffmpeg.run(
                     [
-                        "-ss", f"{offset:.3f}", "-t", f"{length:.3f}", "-i", str(audio),
-                        "-vn", "-c:a", "copy", str(part),
+                        "-ss",
+                        f"{offset:.3f}",
+                        "-t",
+                        f"{length:.3f}",
+                        "-i",
+                        str(audio),
+                        "-vn",
+                        "-c:a",
+                        "copy",
+                        str(part),
                     ]  # fmt: skip
                 )
             data: dict[str, Any] = {
@@ -259,10 +265,17 @@ def transcribe_groq(
                 # Spelling hints (names, titles) biasing recognition; Groq caps ~224 tokens.
                 data["prompt"] = prompt
             payload = _post_with_retry(
-                http, url, api_key=api_key, audio=part, data=data, cancelled=cancelled, sleep=sleep,
+                http,
+                url,
+                api_key=api_key,
+                audio=part,
+                data=data,
+                cancelled=cancelled,
+                sleep=sleep,
                 label=(
                     f"Transcribing with Groq Whisper (chunk {index + 1}/{len(chunks)})"
-                    if len(chunks) > 1 else "Transcribing with Groq Whisper"
+                    if len(chunks) > 1
+                    else "Transcribing with Groq Whisper"
                 ),
             )
             if not transcript.language:

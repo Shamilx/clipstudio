@@ -414,3 +414,32 @@ def _frame_signature(video: Path, timestamp: float) -> str:
         check=True,
     )
     return result.stdout.strip()
+
+
+class TestTeaserRender:
+    def test_teaser_clip_is_longer_and_valid(self, source_video, tmp_path) -> None:
+        from clipstudio.config import EditSettings
+
+        texts = [f"word{i}" for i in range(16)]
+        talk = [Word(t, 0.4 + i * 0.5, 0.4 + i * 0.5 + 0.4) for i, t in enumerate(texts)]
+        crop = centre_crop(SOURCE_W, SOURCE_H, 9.0)
+        edit = EditSettings(trim_silence=False, remove_fillers=False, teaser=True)
+
+        def render(name: str, teaser_on: bool):
+            request = export.ExportRequest(
+                source=source_video, destination=tmp_path / name, start_s=0.0, end_s=9.0,
+                crop_path=crop, words=talk, style=captions.get_style("bold_pop"),
+                emphasis_times=[6.0], burn_captions=True,
+            )  # fmt: skip
+            settings = edit if teaser_on else edit.model_copy(update={"teaser": False})
+            export.export_clip(request, work_dir=tmp_path / "work", edit=settings)
+            return request.destination
+
+        plain = render("plain.mp4", False)
+        with_teaser = render("teaser.mp4", True)
+        base = ffmpeg.probe(plain).duration_s
+        info = ffmpeg.probe(with_teaser)
+        assert (info.width, info.height) == (720, 1280) and info.has_audio
+        assert 1.0 <= info.duration_s - base <= 1.7  # teaser adds 1.0-1.5 s
+        # The first frame is the teaser (a later moment), not the clip opening.
+        assert _frame_signature(with_teaser, 0.1) != _frame_signature(plain, 0.1)

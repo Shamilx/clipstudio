@@ -46,8 +46,10 @@ class EditPlan:
 
     @property
     def is_noop(self) -> bool:
-        return len(self.keep) == 1 and self.keep[0][0] <= 0.001 and (
-            self.keep[0][1] >= self.duration_s - 0.001
+        return (
+            len(self.keep) == 1
+            and self.keep[0][0] <= 0.001
+            and (self.keep[0][1] >= self.duration_s - 0.001)
         )
 
     def offsets(self) -> list[float]:
@@ -158,8 +160,12 @@ def apply_cuts(crop_path: CropPath, keep: list[tuple[float, float]]) -> CropPath
             if b - a > 0.02:
                 pieces.append(replace(seg, start_s=a, end_s=b))
     return CropPath(
-        crop_path.source_width, crop_path.source_height, pieces, crop_path.speaker,
-        crop_path.active, crop_path.faces,
+        crop_path.source_width,
+        crop_path.source_height,
+        pieces,
+        crop_path.speaker,
+        crop_path.active,
+        crop_path.faces,
     )
 
 

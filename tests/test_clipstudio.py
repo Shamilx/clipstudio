@@ -90,12 +90,19 @@ class TestGroqMapping:
         def handler(request: httpx.Request) -> httpx.Response:
             calls["n"] += 1
             if calls["n"] < 3:
-                return httpx.Response(429, headers={"retry-after": "2"}, json={"error": {"message": "slow"}})
+                return httpx.Response(
+                    429, headers={"retry-after": "2"}, json={"error": {"message": "slow"}}
+                )
             return httpx.Response(200, json=self.payload())
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         t = groq_whisper.transcribe_groq(
-            audio, WhisperSettings(), api_key="k", duration_s=3.0, client=client, sleep=sleeps.append
+            audio,
+            WhisperSettings(),
+            api_key="k",
+            duration_s=3.0,
+            client=client,
+            sleep=sleeps.append,
         )
         assert calls["n"] == 3 and sleeps == [2.0, 2.0]
         assert len(t.words) == 4 and t.language == "english"
@@ -134,8 +141,12 @@ class TestCaptionLayout:
         width, height = 720, 1280
         side = round(width * style.side_margin_ratio)
         for group in captions.group_words(words, max_words=style.max_words):
-            texts = [captions.upper_loc(w.text, "az") if style.all_caps else w.text for w in group.words]
-            lines, px = captions.fit_group(texts, style, round(height * style.size_ratio), width - 2 * side)
+            texts = [
+                captions.upper_loc(w.text, "az") if style.all_caps else w.text for w in group.words
+            ]
+            lines, px = captions.fit_group(
+                texts, style, round(height * style.size_ratio), width - 2 * side
+            )
             if px > max(10, int(round(height * style.size_ratio) * 0.45)):
                 assert len(lines) <= style.max_lines
             for line in lines:
@@ -152,11 +163,11 @@ class TestCaptionLayout:
         from PIL import ImageFont
 
         font = ImageFont.truetype(str(captions.FONT_DIR / captions.FONT_FILE), 40)
-        notdef = font.getmask("￿").getbbox()
+        font.getmask("￿").getbbox()
         for ch in "əğşçöüıİƏ":
             assert font.getmask(ch).getbbox() is not None
             assert font.getlength(ch) > 0
-        assert notdef is None or True
+        assert True
 
     def test_keyword_gets_colour_and_scale(self) -> None:
         words = _words("this costs 50 dollars")
@@ -168,7 +179,9 @@ class TestCaptionLayout:
         assert f"\\fscx{captions.KEYWORD_SCALE}" in joined
 
     def test_one_word_preset_has_one_word_per_event(self) -> None:
-        subs = captions.build_ass(_words("a b c d"), captions.get_style("one_word"), width=720, height=1280)
+        subs = captions.build_ass(
+            _words("a b c d"), captions.get_style("one_word"), width=720, height=1280
+        )
         assert len(subs.events) == 4
 
     def test_legacy_keys_still_resolve(self) -> None:
@@ -180,8 +193,12 @@ class TestCaptionLayout:
 
 class TestScoring:
     def test_dense_numeric_clip_beats_slow_vague_one(self) -> None:
-        good = [Word(w, i * 0.35, i * 0.35 + 0.3) for i, w in enumerate(
-            ("I lost $2,000 in 3 days! Why? Because 90% of ads fail. " * 8).split())]
+        good = [
+            Word(w, i * 0.35, i * 0.35 + 0.3)
+            for i, w in enumerate(
+                ("I lost $2,000 in 3 days! Why? Because 90% of ads fail. " * 8).split()
+            )
+        ]
         slow = [Word("well", i * 1.5, i * 1.5 + 0.4) for i in range(20)]
         assert scoring.heuristic_score(good) > scoring.heuristic_score(slow)
 
@@ -242,7 +259,10 @@ class TestAutoEdit:
 
         path = centre_crop(1280, 720, 10.0)
         cut = autoedit.apply_cuts(path, [(0.0, 3.0), (5.0, 10.0)])
-        assert [(round(s.start_s, 2), round(s.end_s, 2)) for s in cut.segments] == [(0.0, 3.0), (5.0, 10.0)]
+        assert [(round(s.start_s, 2), round(s.end_s, 2)) for s in cut.segments] == [
+            (0.0, 3.0),
+            (5.0, 10.0),
+        ]
 
     def test_zoom_schedule_and_expression(self) -> None:
         plan = autoedit.EditPlan(20.0, [(0.0, 5.0), (7.0, 12.0), (13.0, 20.0)])
@@ -276,7 +296,9 @@ class TestFallback:
 
         async def fake_complete(self, system, user, config):
             used.append(self.model)
-            return '<think>x</think>{"clips":[{"start_word_index":1,"end_word_index":9,"title":"T"}]}'
+            return (
+                '<think>x</think>{"clips":[{"start_word_index":1,"end_word_index":9,"title":"T"}]}'
+            )
 
         monkeypatch.setattr(OpenAIProvider, "_complete", fake_complete)
 

@@ -71,8 +71,12 @@ def resolve_layout(path: CropPath, mode: str, out_w: int, out_h: int, ratio: str
             w, h, x, y = face_crop(path, out_w, bot_h)
             segments.append(
                 replace(
-                    seg, width=w, height=h, keyframes=[CropKeyframe(seg.start_s, x, y)],
-                    fit=False, layout="split",
+                    seg,
+                    width=w,
+                    height=h,
+                    keyframes=[CropKeyframe(seg.start_s, x, y)],
+                    fit=False,
+                    layout="split",
                 )
             )
         elif mode == "speaker" and seg.fit and seg.strategy == Strategy.WIDE:
@@ -82,8 +86,13 @@ def resolve_layout(path: CropPath, mode: str, out_w: int, out_h: int, ratio: str
             y = max(0.0, min(sp["eye_y"] - 0.38 * ch, path.source_height - ch))
             segments.append(
                 replace(
-                    seg, width=cw, height=ch, keyframes=[CropKeyframe(seg.start_s, x, y)],
-                    fit=False, layout="speaker", strategy=Strategy.TRACK,
+                    seg,
+                    width=cw,
+                    height=ch,
+                    keyframes=[CropKeyframe(seg.start_s, x, y)],
+                    fit=False,
+                    layout="speaker",
+                    strategy=Strategy.TRACK,
                 )
             )
         else:

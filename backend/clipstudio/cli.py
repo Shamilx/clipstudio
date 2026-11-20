@@ -439,13 +439,20 @@ def clip(
         "", "--more", help="Generate more clips for this finished job id (use -n for how many)."
     ),
     film: bool = typer.Option(
-        False, "--film", help="Force the film content profile (default: chosen from the brief / source)."
+        False,
+        "--film",
+        help="Force the film content profile (default: chosen from the brief / source).",
     ),
     profile: str = typer.Option(
-        "", "--profile", help="Content profile: film, talking, event or gaming (default: automatic)."
+        "",
+        "--profile",
+        help="Content profile: film, talking, event or gaming (default: automatic).",
     ),
     template: str = typer.Option(
-        "", "--template", "-t", help="Template name (e.g. a campaign template with required hashtags)."
+        "",
+        "--template",
+        "-t",
+        help="Template name (e.g. a campaign template with required hashtags).",
     ),
 ) -> None:
     """Turn a video into captioned vertical clips."""
@@ -622,7 +629,9 @@ def _generate_more(job_id: str, count: int, brief: str = "", no_visual: bool = F
         console.print(f"[red]Job {job_id} not found.[/red]")
         raise typer.Exit(1)
     if job.status != "done":
-        console.print(f"[red]Only finished jobs can generate more (this one is {job.status}).[/red]")
+        console.print(
+            f"[red]Only finished jobs can generate more (this one is {job.status}).[/red]"
+        )
         raise typer.Exit(1)
     source = store.get_source(job.source_id)
     if source is None:

@@ -21,15 +21,17 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .. import resources
-from ..config import EditSettings, ExportSettings
+from ..config import ClipSettings, EditSettings, ExportSettings
 from ..system import report
-from . import autoedit, ffmpeg, layout
+from . import autoedit, coldopen, ffmpeg, layout
 from . import captions as captions_module
+from . import teaser as teaser_module
 from .captions import CaptionStyle, HookSpec
 from .editplan import EditPlanData
 from .placement import ZoneSegment, build_zones
 from .reframe.croppath import CropPath, CropSegment, segment_crop_filter
 from .scoring import _NUMBER
+from .teaser import Teaser
 from .transcript import Word
 
 log = logging.getLogger(__name__)
@@ -79,6 +81,14 @@ class ExportRequest:
     edit_plan: EditPlanData | None = None
     #: Extra padding around face boxes when keeping captions off faces (QA retry).
     caption_face_margin: float = 0.0
+    #: Cold open: the user chose these bounds by hand, so the start must not move.
+    user_trimmed: bool = False
+    #: Cold open never shortens the clip below this (0 = no floor).
+    min_duration_s: float = 0.0
+    #: Teaser never pushes the total past this (None = ClipSettings default).
+    max_duration_s: float | None = None
+    #: Silence map ``(start, end)`` in absolute (transcript) seconds.
+    silences: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def duration_s(self) -> float:
@@ -107,10 +117,21 @@ class RenderPlan:
     accent: str = "#FFD400"
     #: Where the picture / faces sit per stretch of the edited timeline.
     zones: list[ZoneSegment] = field(default_factory=list)
+    #: Flash-forward excerpt (edited-timeline seconds) rendered before the clip.
+    teaser: Teaser | None = None
+    #: Seconds the clip is pushed back by the teaser (0 without one).
+    shift_s: float = 0.0
+    #: Seconds trimmed off the front by the cold open.
+    cold_open_trim_s: float = 0.0
+
+    @property
+    def main_duration_s(self) -> float:
+        """The clip itself, without the teaser."""
+        return self.plan.edited_duration_s
 
     @property
     def duration_s(self) -> float:
-        return self.plan.edited_duration_s
+        return self.plan.edited_duration_s + self.shift_s
 
 
 def ratio_dimensions(ratio: str) -> tuple[int, int]:
@@ -154,6 +175,19 @@ def make_plan(request: ExportRequest, edit: EditSettings) -> RenderPlan:
         if w.end > request.start_s and w.start < request.end_s
     ]
     plan, kept = autoedit.plan_cuts(rel, duration, edit)
+    # Cold open: no dead air or weak filler at the very start (head only).
+    trim = coldopen.head_trim(
+        kept,
+        clip_duration_s=duration,
+        min_duration_s=request.min_duration_s,
+        user_trimmed=request.user_trimmed,
+        silences=[(a - request.start_s, b - request.start_s) for a, b in request.silences],
+        keep_start=plan.keep[0][0] if plan.keep else 0.0,
+    )
+    if trim > 0:
+        trimmed_keep = coldopen.trim_keep_head(plan.keep, trim)
+        plan = autoedit.EditPlan(duration, trimmed_keep)
+        kept = [w for w in kept if w.end > trim]
     out_w, out_h = ratio_dimensions(request.ratio)
     template = request.template
     edit_plan = request.edit_plan
@@ -223,10 +257,28 @@ def make_plan(request: ExportRequest, edit: EditSettings) -> RenderPlan:
                 style=getattr(template, "hook_style", "plain"),
                 primary=getattr(template, "primary_color", "#FFFFFF"),
                 accent=accent,
-                duration_s=float(getattr(template, "hook_duration_s", captions_module.HOOK_DURATION_S)),
+                duration_s=float(
+                    getattr(template, "hook_duration_s", captions_module.HOOK_DURATION_S)
+                ),
             )
     if edit_plan:
         emoji, sfx = _resolve_assets(edit_plan, plan, template, total)
+    zones = build_zones(crop, out_w, out_h)
+
+    teaser = None
+    if edit.teaser:
+        max_total = request.max_duration_s or ClipSettings().max_duration_s
+        teaser = teaser_module.select_teaser(
+            mapped,
+            total,
+            emphasis=[plan.map_time(t) for t in emph_rel],
+            zooms=[b[0] + autoedit.PUNCH_LEAD_S for b in bumps],
+            max_total_s=max_total,
+        )
+    if teaser is not None:
+        mapped, keywords = teaser_module.shift_words(mapped, keywords, teaser)
+        seams = teaser_module.shift_intervals(seams, teaser)
+        zones = teaser_module.shift_zones(zones, teaser)
     return RenderPlan(
         plan=plan,
         crop_path=crop,
@@ -242,7 +294,10 @@ def make_plan(request: ExportRequest, edit: EditSettings) -> RenderPlan:
         progress_colour=progress_colour,
         progress_bar=progress_bar,
         accent=accent,
-        zones=build_zones(crop, out_w, out_h),
+        zones=zones,
+        teaser=teaser,
+        shift_s=teaser.shift_s if teaser else 0.0,
+        cold_open_trim_s=trim,
     )
 
 
@@ -286,6 +341,7 @@ def build_video_filtergraph(
     progress_colour: str = PROGRESS_BAR_COLOUR,
     accent: str = "#FFD400",
     emoji_inputs: list[tuple[int, float]] | None = None,
+    teaser: Teaser | None = None,
 ) -> str:
     """Build the video part of ``-filter_complex``; the final label is ``[vout]``."""
     out_w, out_h = ratio_dimensions(request.ratio)
@@ -346,6 +402,19 @@ def build_video_filtergraph(
         )
         current = "[vz]"
 
+    if teaser is not None:
+        # [teaser excerpt][clip]: the excerpt fades out to white, the clip fades in
+        # from white, so the join reads as a flash. Both come from the same stream.
+        fade = teaser_module.FLASH_FADE_S
+        parts.append(f"{current}split=2[tmain][tsrc]")
+        parts.append(
+            f"[tsrc]trim=start={teaser.start:.4f}:end={teaser.end:.4f},setpts=PTS-STARTPTS,"
+            f"fade=t=out:st={max(0.0, teaser.duration_s - fade):.4f}:d={fade}:color=white[tclip]"
+        )
+        parts.append(f"[tmain]fade=t=in:st=0:d={fade}:color=white[mclip]")
+        parts.append("[tclip][mclip]concat=n=2:v=1:a=0[vtz]")
+        current = "[vtz]"
+
     # Emoji pop in over the picture, under the captions. Each input is a
     # pre-rendered PNG sequence (see ``emoji_sequence``): animating with
     # ``scale eval=frame`` cost ~35% extra render time, a plain overlay is free.
@@ -367,9 +436,7 @@ def build_video_filtergraph(
             f"color=c={progress_colour}:s={out_w}x{PROGRESS_BAR_HEIGHT}:r=30:"
             f"d={progress_bar_s + 1:.3f}[bar]"
         )
-        parts.append(
-            f"{current}[bar]overlay=x='-w+w*t/{progress_bar_s:.3f}':y=0:shortest=1[vout]"
-        )
+        parts.append(f"{current}[bar]overlay=x='-w+w*t/{progress_bar_s:.3f}':y=0:shortest=1[vout]")
     else:
         parts.append(f"{current}null[vout]")
 
@@ -464,8 +531,9 @@ def build_audio_filtergraph(
     music_volume: float = 0.12,
     edited_s: float = 0.0,
     sfx: list[tuple[int, float, float]] | None = None,
+    teaser: Teaser | None = None,
 ) -> str:
-    """Audio chain ending in ``[aout]``: cuts -> (music duck) -> loudnorm."""
+    """Audio chain ending in ``[aout]``: cuts -> (music duck) -> (teaser) -> loudnorm."""
     parts: list[str] = []
     if whole:
         parts.append("[0:a]anull[acat]")
@@ -477,7 +545,9 @@ def build_audio_filtergraph(
                 f"afade=t=in:d={fade:.3f},afade=t=out:st={max(0.0, b - a - fade):.4f}:d={fade:.3f}"
                 f"[a{i}]"
             )
-        parts.append("".join(f"[a{i}]" for i in range(len(keep))) + f"concat=n={len(keep)}:v=0:a=1[acat]")
+        parts.append(
+            "".join(f"[a{i}]" for i in range(len(keep))) + f"concat=n={len(keep)}:v=0:a=1[acat]"
+        )
     current = "[acat]"
     if music_input is not None:
         parts.append(f"{current}asplit=2[vo][vsc]")
@@ -485,7 +555,9 @@ def build_audio_filtergraph(
             f"[{music_input}:a]atrim=0:{edited_s + 1:.3f},asetpts=PTS-STARTPTS,"
             f"volume={music_volume}[mus]"
         )
-        parts.append("[mus][vsc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[duck]")
+        parts.append(
+            "[mus][vsc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[duck]"
+        )
         parts.append("[vo][duck]amix=inputs=2:duration=first:normalize=0[amix]")
         current = "[amix]"
     if sfx:
@@ -501,6 +573,17 @@ def build_audio_filtergraph(
             "".join(labels) + f"amix=inputs={len(labels)}:duration=first:normalize=0[amixfx]"
         )
         current = "[amixfx]"
+    if teaser is not None:
+        # Same excerpt as the video, with short fades at the joins so nothing clicks.
+        f = teaser_module.AUDIO_FADE_S
+        parts.append(f"{current}asplit=2[amain][asrc]")
+        parts.append(
+            f"[asrc]atrim=start={teaser.start:.4f}:end={teaser.end:.4f},asetpts=PTS-STARTPTS,"
+            f"afade=t=in:d={f},afade=t=out:st={max(0.0, teaser.duration_s - 3 * f):.4f}:d={3 * f:.3f}[atz]"
+        )
+        parts.append(f"[amain]afade=t=in:d={f * 1.5:.3f}[amz]")
+        parts.append("[atz][amz]concat=n=2:v=0:a=1[ateaser]")
+        current = "[ateaser]"
     if normalize:
         parts.append(
             f"{current}loudnorm=I={loudness_lufs}:TP={LOUDNESS_TRUE_PEAK}:LRA={LOUDNESS_RANGE}[aout]"
@@ -548,7 +631,8 @@ def export_clip(
     workspace.mkdir(parents=True, exist_ok=True)
 
     plan = make_plan(request, edit)
-    edited_s = plan.duration_s
+    edited_s = plan.duration_s  # including the teaser
+    main_s = plan.main_duration_s
 
     subtitle_name: str | None = None
     fonts_name = "fonts"
@@ -564,7 +648,7 @@ def export_clip(
             lang=request.language,
             seam_intervals=plan.seam_intervals,
             hook=plan.hook,
-            clip_duration_s=request.duration_s,
+            clip_duration_s=request.duration_s + plan.shift_s,
             zones=plan.zones,
             face_margin=request.caption_face_margin,
         )
@@ -583,7 +667,7 @@ def export_clip(
     for k, (t, png) in enumerate(plan.emoji):
         sequence = emoji_sequence(png, workspace / f"emoji{k}", round(out_w * 0.2))
         inputs += ["-framerate", str(EMOJI_FPS), "-i", str(sequence)]
-        emoji_inputs.append((next_input, t))
+        emoji_inputs.append((next_input, t + plan.shift_s))
         next_input += 1
     sfx_inputs: list[tuple[int, float, float]] = []
     sfx_volume = float(getattr(request.template, "sfx_volume", 0.3))
@@ -603,6 +687,7 @@ def export_clip(
         progress_colour=plan.progress_colour,
         accent=plan.accent,
         emoji_inputs=emoji_inputs,
+        teaser=plan.teaser,
     )
 
     filtergraph = video
@@ -615,8 +700,9 @@ def export_clip(
             loudness_lufs=settings.loudness_lufs,
             music_input=1 if use_music else None,
             music_volume=edit.music_volume,
-            edited_s=edited_s,
+            edited_s=main_s,
             sfx=sfx_inputs,
+            teaser=plan.teaser,
         )
         maps += ["-map", "[aout]"]
 
@@ -657,8 +743,7 @@ def export_clip(
         captions_module.write_srt(request.destination.with_suffix(".srt"), plan.words)
 
     log.info(
-        "Exported %s in %.1fs (%.1fs of %.1fs, %s, %d cuts, %d split, %d zooms, "
-        "%d emoji, %d sfx)",
+        "Exported %s in %.1fs (%.1fs of %.1fs, %s, %d cuts, %d split, %d zooms, %d emoji, %d sfx)",
         request.destination.name,
         time.monotonic() - render_started,
         edited_s,

@@ -14,6 +14,7 @@ The result is cached in the job's work dir and applies to every content type.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -152,10 +153,10 @@ def load_or_detect(
         log.warning("Letterbox detection failed (%s); using the full frame.", exc)
         area = None
     if cache is not None:
-        try:
-            cache.write_text(json.dumps({"key": key, "active": list(area) if area else None}), encoding="utf-8")
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            cache.write_text(
+                json.dumps({"key": key, "active": list(area) if area else None}), encoding="utf-8"
+            )
     return area
 
 

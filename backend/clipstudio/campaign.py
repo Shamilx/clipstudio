@@ -8,6 +8,7 @@ model is unavailable. Nothing here may ever fail a job.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import difflib
 import json
 import logging
@@ -119,7 +120,9 @@ def parse_rules(raw: str) -> CampaignRules:
         required_caption_text=_str_list(data.get("required_caption_text")),
         caption_style=str(data.get("caption_style") or "").strip()[:200],
         forbidden=_str_list(data.get("forbidden")),
-        footage_type=footage if footage in ("film", "talking", "event", "gaming", "other") else "other",
+        footage_type=footage
+        if footage in ("film", "talking", "event", "gaming", "other")
+        else "other",
         onscreen_text_required=bool(data.get("onscreen_text_required")),
         warnings=_str_list(data.get("warnings")),
         vocabulary=_str_list(data.get("vocabulary"))[:MAX_VOCAB],
@@ -154,7 +157,9 @@ async def extract_rules(brief: str, today: date, provider: Any | None = None) ->
         return sanitize_rules(rules, today)
 
 
-async def ensure_campaign(job: Any, settings: Any, *, today: date | None = None) -> CampaignRules | None:
+async def ensure_campaign(
+    job: Any, settings: Any, *, today: date | None = None
+) -> CampaignRules | None:
     """Extract and store ``job.settings["campaign"]`` once. Returns the rules (or None)."""
     from .db import store
 
@@ -197,14 +202,17 @@ _DATE_RES = [
     ),
     # 17 November 2026 / 17th of November
     re.compile(
-        rf"\b(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?(?P<m>{_MONTH_RE})\b\.?(?:,?\s+(?P<y>\d{{4}}))?", re.I
+        rf"\b(?P<d>\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?(?P<m>{_MONTH_RE})\b\.?(?:,?\s+(?P<y>\d{{4}}))?",
+        re.I,
     ),
 ]
 _ISO_DATE = re.compile(r"(?P<y>\d{4})-(?P<mo>\d{1,2})-(?P<d>\d{1,2})")
 _PREORDER = re.compile(r"pre[- ]?order|coming soon|arriving soon|releasing soon", re.I)
 _COMING_TO = re.compile(
     r"(?:coming|arriving|releasing|launching|available)\s+(?:soon\s+)?(?:to|on|at)\s+"
-    r"(?P<where>[^.\n]*?)\s*(?:on\s+|from\s+)?\b(?:" + _MONTH_RE + r")\b\.?\s*\d{0,2}(?:st|nd|rd|th)?"
+    r"(?P<where>[^.\n]*?)\s*(?:on\s+|from\s+)?\b(?:"
+    + _MONTH_RE
+    + r")\b\.?\s*\d{0,2}(?:st|nd|rd|th)?"
     r"(?:,?\s+\d{4})?",
     re.I,
 )
@@ -218,10 +226,8 @@ _RELEASED_WARNING = re.compile(
 def _find_dates(text: str, today: date) -> list[date]:
     found: list[date] = []
     for m in _ISO_DATE.finditer(text):
-        try:
+        with contextlib.suppress(ValueError):
             found.append(date(int(m["y"]), int(m["mo"]), int(m["d"])))
-        except ValueError:
-            pass
     for rx in _DATE_RES:
         for m in rx.finditer(text):
             key = m["m"].lower()
@@ -230,10 +236,8 @@ def _find_dates(text: str, today: date) -> list[date]:
             )
             if not month:
                 continue
-            try:
+            with contextlib.suppress(ValueError):
                 found.append(date(int(m["y"]) if m["y"] else today.year, month, int(m["d"])))
-            except ValueError:
-                pass
     return found
 
 
@@ -260,7 +264,7 @@ def sanitize_caption_text(
         m = _COMING_TO.search(line)
         if m and (past or released):
             where = re.sub(r"\s+", " ", m["where"]).strip(" ,-")
-            line = (line[: m.start()] + f"Out now on {where}".strip() + line[m.end():]).strip()
+            line = (line[: m.start()] + f"Out now on {where}".strip() + line[m.end() :]).strip()
         if line.lower() not in {x.lower() for x in out}:
             out.append(line)
     return out
@@ -269,8 +273,37 @@ def sanitize_caption_text(
 #: Tags nobody wants on a clip post: body-part / gross words that topical tag
 #: generation sometimes produces. Kept deliberately small.
 TAG_BLOCKLIST = frozenset(
-    "butt ass arse boob boobs breast breasts nipple nipples belly armpit armpits poop pee fart "
-    "farts sex sexy naked nude nudes penis vagina crotch toilet vomit puke booty thong".split()
+    [
+        "butt",
+        "ass",
+        "arse",
+        "boob",
+        "boobs",
+        "breast",
+        "breasts",
+        "nipple",
+        "nipples",
+        "belly",
+        "armpit",
+        "armpits",
+        "poop",
+        "pee",
+        "fart",
+        "farts",
+        "sex",
+        "sexy",
+        "naked",
+        "nude",
+        "nudes",
+        "penis",
+        "vagina",
+        "crotch",
+        "toilet",
+        "vomit",
+        "puke",
+        "booty",
+        "thong",
+    ]
 )
 
 
@@ -289,7 +322,12 @@ def required_section_lines(brief: str) -> list[str]:
     i = 0
     while i < len(lines):
         head = lines[i].strip()
-        if head and "required" in head.lower() and "hashtag" not in head.lower() and (head.endswith(":") or len(head) < 70):
+        if (
+            head
+            and "required" in head.lower()
+            and "hashtag" not in head.lower()
+            and (head.endswith(":") or len(head) < 70)
+        ):
             inline = head.split(":", 1)[1].strip() if ":" in head else ""
             if inline and not _BULLET.match(inline):
                 out.append(inline)
@@ -314,9 +352,13 @@ def required_section_lines(brief: str) -> list[str]:
     cleaned = []
     for line in out:
         line = " ".join(line.split())
-        if re.match(r"(?i)(includes?|no|not|do not|don't|must|avoid|never|ensure|make sure|should)", line):
+        if re.match(
+            r"(?i)(includes?|no|not|do not|don't|must|avoid|never|ensure|make sure|should)", line
+        ):
             continue  # an instruction about the post, not text to paste
-        if re.match(r"(?i)(includes?|no|not|do not|don't|must|avoid|never|ensure|make sure|should)\b", line):
+        if re.match(
+            r"(?i)(includes?|no|not|do not|don't|must|avoid|never|ensure|make sure|should)\b", line
+        ):
             continue  # an instruction about the post, not text to paste
         if line and re.sub(r"#\w+|\s", "", line):
             cleaned.append(line)
@@ -354,7 +396,10 @@ def clean_hashtags(required: list[str], topical: list[str], max_topical: int = 4
         body = t[1:].lower()
         if len(body) < 3 or body.isdigit() or body in TAG_BLOCKLIST or t.lower() in seen:
             continue
-        if any(difflib.SequenceMatcher(None, body, r[1:].lower()).ratio() >= 0.85 for r in tags[: len(seen_required)]):
+        if any(
+            difflib.SequenceMatcher(None, body, r[1:].lower()).ratio() >= 0.85
+            for r in tags[: len(seen_required)]
+        ):
             continue
         if added >= max_topical:
             break
@@ -370,7 +415,9 @@ def sanitize_rules(rules: CampaignRules, today: date | None = None) -> CampaignR
         rules.required_caption_text, rules.warnings, today
     )
     rules.required_hashtags = clean_hashtags(rules.required_hashtags, [], 0)
-    rules.vocabulary = list(dict.fromkeys(v.strip() for v in rules.vocabulary if v.strip()))[:MAX_VOCAB]
+    rules.vocabulary = list(dict.fromkeys(v.strip() for v in rules.vocabulary if v.strip()))[
+        :MAX_VOCAB
+    ]
     return rules
 
 
@@ -381,7 +428,9 @@ def merge_metadata(
     description = (description or "").strip()
     lower = " ".join(description.lower().split())
     extra = [
-        t for t in rules.required_caption_text if t.strip() and " ".join(t.lower().split()) not in lower
+        t
+        for t in rules.required_caption_text
+        if t.strip() and " ".join(t.lower().split()) not in lower
     ]
     if extra:
         block = "\n".join(extra)
@@ -389,7 +438,9 @@ def merge_metadata(
     return description, clean_hashtags(rules.required_hashtags, hashtags, max_topical)
 
 
-def validate_metadata(rules: CampaignRules | None, description: str, hashtags: list[str]) -> list[str]:
+def validate_metadata(
+    rules: CampaignRules | None, description: str, hashtags: list[str]
+) -> list[str]:
     """Missing campaign requirements in a clip's final metadata (empty = all present)."""
     if rules is None:
         return []
@@ -434,7 +485,9 @@ def enforce_metadata(rules: CampaignRules | None, clip: Any, *, max_topical: int
         if problem.startswith("missing required hashtag "):
             clip.hashtags = [problem.rsplit(" ", 1)[-1], *clip.hashtags]
         elif problem.startswith("missing required caption text: "):
-            clip.description = f"{strip_trailing_tags(clip.description)}\n{problem.split(': ', 1)[1]}".strip()
+            clip.description = (
+                f"{strip_trailing_tags(clip.description)}\n{problem.split(': ', 1)[1]}".strip()
+            )
     clip.description = with_hashtags(clip.description, clip.hashtags)
     return problems
 

@@ -45,7 +45,9 @@ class ZoneSegment:
         return self.start <= t < self.end
 
     def faces_between(self, t0: float, t1: float, pad_s: float = 0.5) -> list[Rect]:
-        return [(x0, y0, x1, y1) for t, x0, y0, x1, y1 in self.faces if t0 - pad_s <= t <= t1 + pad_s]
+        return [
+            (x0, y0, x1, y1) for t, x0, y0, x1, y1 in self.faces if t0 - pad_s <= t <= t1 + pad_s
+        ]
 
 
 def _kf_at(seg: CropSegment, t: float) -> tuple[float, float]:
@@ -132,12 +134,13 @@ def choose_bottom_y(
     box_h: float,
     face_margin: float = 0.0,
     force_band: bool = True,
+    top_limit_ratio: float | None = None,
 ) -> float | None:
     """Bottom y for the caption block, or None to keep the style's default position."""
     if zone is None or zone.kind == "split":
         return None
     safe_bottom = out_h * (1 - SAFE_BOTTOM_RATIO)
-    top_limit = out_h * TOP_LIMIT_RATIO
+    top_limit = out_h * max(TOP_LIMIT_RATIO, top_limit_ratio or 0.0)
     x0 = (out_w - box_w) / 2
     x1 = x0 + box_w
 

@@ -33,15 +33,21 @@ def _run(coro):
 
 
 def test_extract_parses_and_passes_outdated_warning() -> None:
-    reply = "```json\n" + json.dumps({
-        "required_hashtags": ["texas", "#Movie"],
-        "required_caption_text": ["Out now on digital"],
-        "caption_style": "funny",
-        "forbidden": ["no ad look"],
-        "footage_type": "film",
-        "onscreen_text_required": False,
-        "warnings": ["'coming November 17' is outdated"],
-    }) + "\n```"
+    reply = (
+        "```json\n"
+        + json.dumps(
+            {
+                "required_hashtags": ["texas", "#Movie"],
+                "required_caption_text": ["Out now on digital"],
+                "caption_style": "funny",
+                "forbidden": ["no ad look"],
+                "footage_type": "film",
+                "onscreen_text_required": False,
+                "warnings": ["'coming November 17' is outdated"],
+            }
+        )
+        + "\n```"
+    )
     provider = FakeProvider(reply)
     rules = _run(campaign.extract_rules(BRIEF, date(2026, 11, 19), provider))
     assert "2026-11-19" in provider.user
@@ -65,7 +71,9 @@ def test_merge_metadata_dedupes_and_orders() -> None:
         required_caption_text=["Out now on digital", "Already here"],
     )
     desc, tags = campaign.merge_metadata(
-        rules, "Great moment? already here too.", ["#shorts", "#TEXAS", "#a", "#b", "#c", "#d", "#e", "#f"]
+        rules,
+        "Great moment? already here too.",
+        ["#shorts", "#TEXAS", "#a", "#b", "#c", "#d", "#e", "#f"],
     )
     assert tags[:2] == ["#Texas", "#movie"]
     assert len({t.lower() for t in tags}) == len(tags) and len(tags) <= 8
@@ -94,8 +102,15 @@ def test_brand_safe_overrides_template_limits() -> None:
 
 
 def test_post_text_written(tmp_path) -> None:
-    clip = Clip(id="c", job_id="j", start_s=0, end_s=5, title="My title",
-                description="Caption.\n\nOut now", hashtags=["#a", "#b"])
+    clip = Clip(
+        id="c",
+        job_id="j",
+        start_s=0,
+        end_s=5,
+        title="My title",
+        description="Caption.\n\nOut now",
+        hashtags=["#a", "#b"],
+    )
     out = write_post_text(clip, tmp_path / "clip_9x16.mp4")
     assert out.name == "clip_9x16.txt"
     assert out.read_text(encoding="utf-8") == "My title\n\nCaption.\n\nOut now\n\n#a #b\n"

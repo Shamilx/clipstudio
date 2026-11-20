@@ -14,9 +14,10 @@ from pydantic import BaseModel
 from .. import paths
 from ..config import load as load_settings
 from ..db import store
-from ..db.models import Export, new_id
+from ..db.models import ClipResult, Export, new_id
 from ..pipeline import captions as captions_module
 from ..pipeline import export as export_module
+from ..pipeline import hooks as hooks_module
 from ..pipeline.reframe.croppath import CropPath, centre_crop
 from ..pipeline.runner import MUSIC_DIR, JobWorkspace
 from ..pipeline.transcript import Transcript, Word
@@ -28,6 +29,8 @@ from .schemas import (
     ClipPatchIn,
     ExportOut,
     ExportRequestIn,
+    ResultIn,
+    ResultOut,
     WordOut,
 )
 
@@ -135,9 +138,20 @@ async def patch_clip(clip_id: str, payload: ClipPatchIn) -> ClipOut:
         first, last = transcript.indices_in_range(start_s, end_s)
         start_word, end_word = first, max(first, last - 1)
 
+    hook = None
+    if payload.hook is not None:
+        hook = " ".join(payload.hook.split())
+        if not hook:
+            raise HTTPException(status_code=400, detail="The hook cannot be empty.")
+        if hooks_module.has_emoji(hook):
+            raise HTTPException(
+                status_code=400, detail="The hook font cannot draw emoji; remove them."
+            )
+
     await asyncio.to_thread(
         store.update_clip,
         clip_id,
+        hook=hook,
         description=payload.description,
         hashtags=payload.hashtags,
         start_s=start_s if trimmed else None,
@@ -156,8 +170,74 @@ async def patch_clip(clip_id: str, payload: ClipPatchIn) -> ClipOut:
         ),
     )
 
+    if hook is not None:
+        await asyncio.to_thread(_sync_plan_hook, clip.job_id, clip_id, hook)
+
     updated = await asyncio.to_thread(store.get_clip, clip_id)
     return await asyncio.to_thread(_clip_out, updated)
+
+
+def _sync_plan_hook(job_id: str, clip_id: str, hook: str) -> None:
+    """Keep the stored edit plan (plans/<clip_id>.json) in step with the clip's hook,
+    so the next export renders it."""
+    from ..pipeline import editplan
+
+    path = JobWorkspace(job_id).edit_plan(clip_id)
+    plan = editplan.EditPlanData.load(path)
+    if plan is not None and plan.hook_text != hook:
+        plan.hook_text = hook
+        plan.save(path)
+
+
+@router.post("/clips/{clip_id}/hook/swap", response_model=ClipOut)
+async def swap_hook(clip_id: str) -> ClipOut:
+    """Make the alternative hook the active one (and the active one the alternative)."""
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+    if not clip.hook_alt:
+        raise HTTPException(status_code=400, detail="This clip has no alternative hook.")
+    await asyncio.to_thread(store.update_clip, clip_id, hook=clip.hook_alt, hook_alt=clip.hook)
+    await asyncio.to_thread(_sync_plan_hook, clip.job_id, clip_id, clip.hook_alt)
+    return await asyncio.to_thread(_clip_out, await asyncio.to_thread(store.get_clip, clip_id))
+
+
+@router.get("/clips/{clip_id}/results", response_model=list[ResultOut])
+async def list_results(clip_id: str) -> list[ResultOut]:
+    if await asyncio.to_thread(store.get_clip, clip_id) is None:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+    rows = await asyncio.to_thread(store.list_clip_results, clip_id)
+    return [ResultOut.of(r) for r in rows]
+
+
+@router.post("/clips/{clip_id}/results", response_model=ResultOut, status_code=201)
+async def add_result(clip_id: str, payload: ResultIn) -> ResultOut:
+    """Record how a posted clip performed; feeds the hook writers' examples."""
+    clip = await asyncio.to_thread(store.get_clip, clip_id)
+    if clip is None:
+        raise HTTPException(status_code=404, detail="Clip not found.")
+    hook = " ".join((payload.hook or clip.hook).split())
+    formula = next(
+        (
+            str(c.get("formula", ""))
+            for c in clip.hook_candidates
+            if isinstance(c, dict) and str(c.get("text", "")).lower() == hook.lower()
+        ),
+        "",
+    )
+    record = ClipResult(
+        id=new_id(), clip_id=clip_id, platform=payload.platform, hook=hook, formula=formula,
+        views=payload.views, viewed_pct=payload.viewed_pct, avg_view_pct=payload.avg_view_pct,
+        days_live=payload.days_live,
+    )  # fmt: skip
+    await asyncio.to_thread(store.add_clip_result, record)
+    return ResultOut.of(record)
+
+
+@router.delete("/clips/{clip_id}/results/{result_id}", status_code=204)
+async def delete_result(clip_id: str, result_id: str) -> None:
+    if not await asyncio.to_thread(store.delete_clip_result, clip_id, result_id):
+        raise HTTPException(status_code=404, detail="Result not found.")
 
 
 @router.patch("/clips/{clip_id}/captions", response_model=ClipOut)
@@ -246,6 +326,9 @@ async def _render_clip(
             template_name=template.name,
         )  # fmt: skip
         await asyncio.to_thread(plan.save, plan_path)
+    if clip.hook and plan.hook_text != clip.hook:
+        # The clip's hook (editable in the review UI) is what the export shows.
+        plan.hook_text = clip.hook
     # Re-apply the template's limits to the stored plan; the stored plan itself
     # stays untouched so a later template with a higher zoom limit still has them.
     plan = editplan.constrain(plan, limits, duration)
@@ -276,7 +359,16 @@ async def _render_clip(
         has_audio=source.has_audio,
         language=transcript.language,
         emphasis_times=_emphasis_times(clip),
-        burn_captions=bool((job.settings.get("edit") or {}).get("burn_captions", settings.edit.burn_captions)),
+        burn_captions=bool(
+            (job.settings.get("edit") or {}).get("burn_captions", settings.edit.burn_captions)
+        ),
+        user_trimmed=clip.user_trimmed,
+        min_duration_s=float(
+            (job.settings.get("clips") or {}).get("min_duration_s", settings.clips.min_duration_s)
+        ),
+        max_duration_s=float(
+            (job.settings.get("clips") or {}).get("max_duration_s", settings.clips.max_duration_s)
+        ),
         music_file=export_module.find_music(MUSIC_DIR, clip.id)
         if settings.edit.background_music
         else None,

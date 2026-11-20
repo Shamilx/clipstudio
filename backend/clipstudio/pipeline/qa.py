@@ -113,7 +113,9 @@ def detect_black_bands(frames_gray: list[np.ndarray]) -> tuple[float, float]:
 # --------------------------------------------------------------------------
 
 
-def sample_frames(video: Path, n: int = N_FRAMES, width: int = FRAME_WIDTH) -> list[tuple[float, Any]]:
+def sample_frames(
+    video: Path, n: int = N_FRAMES, width: int = FRAME_WIDTH
+) -> list[tuple[float, Any]]:
     """``[(t, BGR frame)]`` evenly spread over 8%..92% of the video."""
     import cv2
 
@@ -135,7 +137,9 @@ def sample_frames(video: Path, n: int = N_FRAMES, width: int = FRAME_WIDTH) -> l
                 continue
             h, w = frame.shape[:2]
             if w > width:
-                frame = cv2.resize(frame, (width, round(h * width / w)), interpolation=cv2.INTER_AREA)
+                frame = cv2.resize(
+                    frame, (width, round(h * width / w)), interpolation=cv2.INTER_AREA
+                )
             out.append((idx / fps, frame))
     finally:
         cap.release()
@@ -150,7 +154,9 @@ _POS = re.compile(r"\\pos\((-?[\d.]+),(-?[\d.]+)\)")
 _TAGS = re.compile(r"\{[^}]*\}")
 
 
-def caption_box_at(ass_path: Path, t: float, width: int, height: int) -> tuple[float, float, float, float] | None:
+def caption_box_at(
+    ass_path: Path, t: float, width: int, height: int
+) -> tuple[float, float, float, float] | None:
     """Caption block rectangle (px, output space) on screen at ``t``; None when none is shown.
 
     Position comes from the burned-in ASS file: ``\\pos`` when the placement logic
@@ -263,7 +269,10 @@ def numeric_checks(video: Path, ass_path: Path | None, result: QAResult) -> list
                         break
             result.metrics["caption_face_frames"] = hits
             if hits:
-                result.add(CAPTION_ON_FACE, f"Caption covers a face in {hits} of {len(frames)} sampled frames.")
+                result.add(
+                    CAPTION_ON_FACE,
+                    f"Caption covers a face in {hits} of {len(frames)} sampled frames.",
+                )
     return frames
 
 

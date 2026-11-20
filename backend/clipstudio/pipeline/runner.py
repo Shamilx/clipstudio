@@ -233,7 +233,11 @@ class PipelineRunner:
             if named:
                 why = f"from the brief: {footage} footage"
             else:
-                self._emit(Stage.HIGHLIGHTS, 0.0, "Choosing content profile: measuring speech and shot cuts")
+                self._emit(
+                    Stage.HIGHLIGHTS,
+                    0.0,
+                    "Choosing content profile: measuring speech and shot cuts",
+                )
                 minutes = max((self.source.duration_s or transcript.duration or 0.0) / 60.0, 1 / 60)
                 wpm = len(transcript.words) / minutes if transcript.words else 0.0
                 cuts = self._cut_rate()
@@ -287,9 +291,7 @@ class PipelineRunner:
 
     def _scene_text(self, clip: Clip) -> str:
         lines = [
-            f"- {m.desc}"
-            for m in self._moments
-            if clip.start_s - 1.0 <= m.t <= clip.end_s + 1.0
+            f"- {m.desc}" for m in self._moments if clip.start_s - 1.0 <= m.t <= clip.end_s + 1.0
         ]
         return "\n".join(lines[:8])
 
@@ -489,7 +491,9 @@ class PipelineRunner:
         config.campaign_note = campaign.prompt_section(self._rules())
         config.max_clips = count
 
-        self._emit(stage, 0.0, f"Finding {count} more highlights with {activity.describe(provider)}")
+        self._emit(
+            stage, 0.0, f"Finding {count} more highlights with {activity.describe(provider)}"
+        )
         try:
             clips = await highlights.detect(
                 transcript,
@@ -548,12 +552,17 @@ class PipelineRunner:
             return
         self._emit(stage, 0.9, "Checking for black bars (letterbox)")
         self.active = letterbox.load_or_detect(
-            Path(self.source.path), width, height, self.source.duration_s or 0.0,
+            Path(self.source.path),
+            width,
+            height,
+            self.source.duration_s or 0.0,
             self.workspace.letterbox,
         )
         if self.active:
             ax, ay, aw, ah = self.active
-            self.activity.set(f"Black bars found: using the {aw}x{ah} picture (of {width}x{height})")
+            self.activity.set(
+                f"Black bars found: using the {aw}x{ah} picture (of {width}x{height})"
+            )
         else:
             self.activity.set("No black bars found")
 
@@ -681,7 +690,8 @@ class PipelineRunner:
         for index, clip in enumerate(clips):
             self._check_cancelled()
             self._emit(
-                stage, index / len(clips),
+                stage,
+                index / len(clips),
                 f"Framing clip {index + 1}/{len(clips)}: detecting faces",
             )
             cached = self.workspace.crop_path(clip.id)
@@ -713,7 +723,8 @@ class PipelineRunner:
                 sum(1 for s in crop_paths[clip.id].segments if s.fit),
             )  # fmt: skip
             self._emit(
-                stage, (index + 1) / len(clips),
+                stage,
+                (index + 1) / len(clips),
                 f"Framing clip {index + 1}/{len(clips)} done ({len(crop_paths[clip.id].segments)} segments)",
             )
 
@@ -733,7 +744,9 @@ class PipelineRunner:
         template_name = str(self.job.settings.get("template") or "auto")
         provider = None
         try:
-            provider = build_provider(self.job.provider or self.settings.active_provider, self.settings)
+            provider = build_provider(
+                self.job.provider or self.settings.active_provider, self.settings
+            )
         except Exception as exc:  # noqa: BLE001 - plans fall back to heuristics
             log.warning("No LLM for edit plans (%s); using heuristic plans.", exc)
 
@@ -788,6 +801,11 @@ class PipelineRunner:
             transcript=" ".join(w.text for w in words),
             scene=self._scene_text(clip),
             tone=rules.caption_style if rules else "",
+            clip_id=clip.id,
+            brief=clean_brief(self.job.settings.get("brief")),
+            rules=rules,
+            description=clip.description,
+            reason=clip.reason,
         )
         if how != "kept":
             self.activity.set(
@@ -839,12 +857,20 @@ class PipelineRunner:
         destination_dir = paths.exports_dir() / self.job.id
         destination_dir.mkdir(parents=True, exist_ok=True)
 
+        silence_spans: list[tuple[float, float]] = []
+        try:
+            raw = json.loads(self.workspace.silences.read_text(encoding="utf-8"))
+            silence_spans = [(float(x["start"]), float(x["end"])) for x in raw]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
         for index, clip in enumerate(clips):
             self._check_cancelled()
             # Announce the stage before the (slow) render starts: with no event
             # until the first progress line, the UI sat on "Captions" for minutes.
             self._emit(
-                stage, index / len(clips),
+                stage,
+                index / len(clips),
                 f"Rendering clip {index + 1}/{len(clips)} with ffmpeg: 0%",
             )
 
@@ -899,6 +925,10 @@ class PipelineRunner:
                 music_file=export.find_music(MUSIC_DIR, clip.id)
                 if self.settings.edit.background_music
                 else None,
+                user_trimmed=bool(getattr(clip, "user_trimmed", False)),
+                min_duration_s=self.settings.clips.min_duration_s,
+                max_duration_s=self.settings.clips.max_duration_s,
+                silences=silence_spans,
             )
 
             def clip_progress(fraction: float, i: int = index) -> None:
@@ -919,7 +949,10 @@ class PipelineRunner:
             )
 
             self._export_ctx[clip.id] = {
-                "request": request, "plan": plan, "destination": destination, "index": index,
+                "request": request,
+                "plan": plan,
+                "destination": destination,
+                "index": index,
             }
             self._write_post_text(clip, destination)
             store.create_export(
@@ -936,14 +969,18 @@ class PipelineRunner:
 
         self._finish_stage(stage)
 
-    def _write_post_text(self, clip: Clip, destination: Path, qa_notes: list[str] | None = None) -> None:
+    def _write_post_text(
+        self, clip: Clip, destination: Path, qa_notes: list[str] | None = None
+    ) -> None:
         """Write the .txt, after checking it carries every campaign requirement."""
         rules = self._rules()
         try:
             if rules is not None:
                 problems = campaign.enforce_metadata(rules, clip, max_topical=self._max_topical())
                 if problems:
-                    log.warning("Clip %s metadata was missing: %s (fixed)", clip.id, "; ".join(problems))
+                    log.warning(
+                        "Clip %s metadata was missing: %s (fixed)", clip.id, "; ".join(problems)
+                    )
                 store.update_clip(clip.id, description=clip.description, hashtags=clip.hashtags)
             else:
                 clip.description = campaign.with_hashtags(clip.description, clip.hashtags)
@@ -960,7 +997,9 @@ class PipelineRunner:
         self._check_cancelled()
         provider = None
         try:
-            provider = build_provider(self.job.provider or self.settings.active_provider, self.settings)
+            provider = build_provider(
+                self.job.provider or self.settings.active_provider, self.settings
+            )
         except Exception as exc:  # noqa: BLE001
             log.warning("No LLM for QA hook fixes (%s).", exc)
         total = len(clips)
@@ -1028,7 +1067,8 @@ class PipelineRunner:
         qstore.save_qa(clip.id, self.job.id, exports[0].id if exports else None, result.to_dict())
         self._write_post_text(clip, ctx["destination"], qa_notes=notes)
         self.activity.set(
-            f"{label}: " + ("passed" if result.ok else f"kept with {len(notes)} note(s)")
+            f"{label}: "
+            + ("passed" if result.ok else f"kept with {len(notes)} note(s)")
             + (f" (fixed: {', '.join(result.fixes)})" if result.fixes and result.ok else "")
         )
 
@@ -1048,7 +1088,9 @@ class PipelineRunner:
             extra = max(8, min(int(0.5 * frac * min(base[2], base[3])), min(base[2], base[3]) // 4))
             stricter = letterbox.stricter(base, 0, 0, extra=extra)
             if self.source.has_video:
-                aspect = {"9:16": (9, 16), "1:1": (1, 1), "16:9": (16, 9)}[self.settings.export.ratio]
+                aspect = {"9:16": (9, 16), "1:1": (1, 1), "16:9": (16, 9)}[
+                    self.settings.export.ratio
+                ]
                 config = ReframeConfig(
                     aspect_w=aspect[0], aspect_h=aspect[1],
                     sample_fps=self.settings.light.face_sample_fps,

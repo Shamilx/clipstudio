@@ -37,7 +37,7 @@ class QualityReport:
     def to_dict(self) -> dict:
         return asdict(self)
 
-    def finalize(self) -> "QualityReport":
+    def finalize(self) -> QualityReport:
         sev = [i["severity"] for i in self.issues]
         self.score = max(0, 100 - 45 * sev.count("error") - 12 * sev.count("warn"))
         self.status = "rejected" if "error" in sev else "review" if "warn" in sev else "ready"
@@ -226,7 +226,11 @@ def score_hook(text: str, hook: str, timeout: float = 30.0) -> int | None:
 def _opening_text(words, seconds: float = 3.0) -> str:
     out = []
     for w in words or []:
-        get = (lambda k, w=w: w.get(k)) if isinstance(w, dict) else (lambda k, w=w: getattr(w, k, None))
+        get = (
+            (lambda k, w=w: w.get(k))
+            if isinstance(w, dict)
+            else (lambda k, w=w: getattr(w, k, None))
+        )
         if (get("start") or 0) <= seconds:
             out.append(str(get("text") or ""))
     return " ".join(out)
@@ -320,7 +324,9 @@ def check_clip(
                     "warn",
                 )
             if tp is not None and tp > MAX_TRUE_PEAK:
-                rep.add("true_peak", f"True peak {tp:.1f} dBTP exceeds {MAX_TRUE_PEAK:.0f}.", "warn")
+                rep.add(
+                    "true_peak", f"True peak {tp:.1f} dBTP exceeds {MAX_TRUE_PEAK:.0f}.", "warn"
+                )
 
     if hook is not None:
         rep.metrics["hook_score"] = hook

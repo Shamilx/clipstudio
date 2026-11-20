@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pysubs2
 
-from .placement import ZoneSegment, choose_bottom_y, zone_at
+from .placement import ZoneSegment, _overlaps, choose_bottom_y, zone_at
 from .transcript import Word
 
 log = logging.getLogger(__name__)
@@ -51,7 +51,18 @@ SAFE_BOTTOM_RATIO = 0.20
 #: Hook card: top edge of the text, as a fraction of the frame height (below the
 #: platform's top bar, inside the top third).
 HOOK_TOP_RATIO = 0.16
-HOOK_DURATION_S = 4.5
+#: Allowed range for the top edge when moving the card off a face.
+HOOK_TOP_MIN_RATIO = 0.14
+HOOK_TOP_MAX_RATIO = 0.18
+HOOK_DURATION_S = 2.8
+#: Hook text size as a fraction of frame height (about 1.25x the old 0.052 / 0.062).
+HOOK_SIZE_RATIO = 0.065
+HOOK_SIZE_RATIO_PHRASE = 0.0775
+HOOK_MAX_LINES = 2
+#: Outline / shadow in reference-1920 pixels (scaled to the real height).
+HOOK_OUTLINE = 14.0
+HOOK_SHADOW = 6.0
+HOOK_BOX_PAD = 22.0
 HOOK_FADE_OUT_MS = 400
 #: Clips shorter than this get a hook of clip length minus HOOK_SHORT_MARGIN_S.
 HOOK_SHORT_CLIP_S = 10.0
@@ -61,7 +72,7 @@ HOOK_MIN_DURATION_S = 2.0
 
 @dataclass
 class HookSpec:
-    """Opening title card, shown for the first ~4.5 s then faded out."""
+    """Opening title card, on screen from the first frame for ~2.8 s then faded out."""
 
     text: str
     style: str = "plain"  # "plain" | "box"
@@ -407,7 +418,9 @@ def group_phrases(
     for index, word in enumerate(words):
         text = word.text.strip()
         add = len(text) + (1 if current.words else 0)
-        if current.words and (word.start - current.words[-1].end > max_gap_s or chars + add > budget):
+        if current.words and (
+            word.start - current.words[-1].end > max_gap_s or chars + add > budget
+        ):
             groups.append(current)
             current, chars = CaptionGroup(), 0
             add = len(text)
@@ -499,6 +512,19 @@ def build_ass(
         groups = group_words(words, max_words=style.max_words)
     default_bottom = height * (1 - style.margin_v_ratio)
 
+    hook_layout = None
+    if hook is not None and hook.text.strip():
+        hook_layout = _layout_hook(
+            hook,
+            style,
+            width=width,
+            height=height,
+            scale=scale,
+            lang=lang,
+            clip_duration_s=clip_duration_s,
+            zones=zones,
+        )
+
     for gi, group in enumerate(groups):
         texts = [_text_of(w, style, lang) for w in group.words]
         if phrase:
@@ -522,7 +548,11 @@ def build_ass(
         else:
             end = group.end
             if style.min_on_screen_s and end - group.start < style.min_on_screen_s:
-                limit = groups[gi + 1].start if gi + 1 < len(groups) else group.start + style.min_on_screen_s
+                limit = (
+                    groups[gi + 1].start
+                    if gi + 1 < len(groups)
+                    else group.start + style.min_on_screen_s
+                )
                 end = max(end, min(group.start + style.min_on_screen_s, limit))
             subs.events.append(
                 _event(
@@ -537,11 +567,15 @@ def build_ass(
             t0, t1 = group.start - time_offset_s, group.end - time_offset_s
             box_h = len(lines) * px * 1.22 + style.outline_width * scale * 2
             box_w = _widest(texts, lines, style, px) + pad
+            # While the hook card is up, captions must stay below it.
+            top_ratio = None
+            if hook_layout is not None and t0 < hook_layout.end_s:
+                top_ratio = (hook_layout.bottom_y + height * 0.02) / height
             y = choose_bottom_y(
                 zone_at(zones, (t0 + t1) / 2),
                 t0=t0, t1=t1, out_w=width, out_h=height,
                 default_bottom=default_bottom, box_w=box_w, box_h=box_h,
-                face_margin=face_margin,
+                face_margin=face_margin, top_limit_ratio=top_ratio,
             )  # fmt: skip
             if y is not None:
                 prefix += f"\\an2\\pos({width // 2},{round(y)})"
@@ -551,18 +585,18 @@ def build_ass(
     _remove_overlaps(subs)
     if seam_intervals:
         _move_to_seam(subs, seam_intervals, x=width // 2, y=round(height * seam_y_ratio))
-    if hook is not None and hook.text.strip():
-        _add_hook(
-            subs, hook, style, width=width, height=height, scale=scale, lang=lang,
-            clip_duration_s=clip_duration_s,
-        )
+    if hook_layout is not None:
+        _add_hook(subs, hook, style, width=width, scale=scale, layout=hook_layout)
     return subs
 
 
 def _widest(texts: list[str], lines: list[list[int]], style: CaptionStyle, px: int) -> float:
     space = measure(" ", style, px)
     return max(
-        (sum(measure(texts[i], style, px) for i in line) + space * (len(line) - 1) for line in lines),
+        (
+            sum(measure(texts[i], style, px) for i in line) + space * (len(line) - 1)
+            for line in lines
+        ),
         default=0.0,
     )
 
@@ -577,8 +611,18 @@ def _move_to_seam(
             event.text = f"{{\\pos({x},{y})}}" + event.text
 
 
-def _add_hook(
-    subs: pysubs2.SSAFile,
+@dataclass
+class HookLayout:
+    words: list[str]
+    lines: list[list[int]]
+    px: int
+    #: Top / bottom edge of the text block in output pixels.
+    top_y: float
+    bottom_y: float
+    end_s: float
+
+
+def _layout_hook(
     hook: HookSpec,
     style: CaptionStyle,
     *,
@@ -586,25 +630,86 @@ def _add_hook(
     height: int,
     scale: float,
     lang: str,
-    clip_duration_s: float | None = None,
-) -> None:
+    clip_duration_s: float | None,
+    zones: list[ZoneSegment] | None,
+) -> HookLayout | None:
+    """Measure the card: font size, line breaks (max 2) and vertical position."""
     boxed = hook.style == "box"
     caps = style.grouping != "phrase"  # film-style captions keep sentence case
-    hook_style = replace(style, max_lines=2 if not boxed else 3, animation="none", boxed=boxed, all_caps=caps)
+    hook_style = replace(
+        style, max_lines=HOOK_MAX_LINES, animation="none", boxed=boxed, all_caps=caps
+    )
     raw_words = hook.text.replace("{", "").replace("}", "").split()
     words = [upper_loc(w, lang) if caps else w for w in raw_words]
     if not words:
-        return
-    base_px = round(height * (0.062 if style.grouping == "phrase" else 0.052))
-    pad = (22 if boxed else 10) * scale * 2
-    lines, px = fit_group(words, hook_style, base_px, width * 0.84 - pad)
+        return None
+    base_px = round(
+        height * (HOOK_SIZE_RATIO_PHRASE if style.grouping == "phrase" else HOOK_SIZE_RATIO)
+    )
+    pad = ((HOOK_BOX_PAD if boxed else HOOK_OUTLINE) * scale) * 2
+    max_width = width * 0.84 - pad
+    lines, px = fit_group(words, hook_style, base_px, max_width)
+    if len(lines) > HOOK_MAX_LINES:
+        # Too long to fit two lines at the shrink floor: balance into two and shrink.
+        lines = balanced_lines(words, max(len(w) for w in words) + 1, HOOK_MAX_LINES)
+        while px > 10 and _widest(words, lines, hook_style, px) > max_width:
+            px -= 2
+    block_h = len(lines) * px * 1.22 + pad
+    end_s = hook_duration(hook, clip_duration_s)
+
+    # Top edge: 16% of the height; 14-18% if that moves the card off a face.
+    avoid: list[tuple[float, float, float, float]] = []
+    for zone in zones or []:
+        if zone.start >= end_s or zone.kind == "split":
+            continue
+        for fx0, fy0, fx1, fy1 in zone.faces_between(zone.start, min(end_s, zone.end), 0.0):
+            mx, my = (fx1 - fx0) * 0.1, (fy1 - fy0) * 0.1
+            avoid.append((fx0 - mx, fy0 - my, fx1 + mx, fy1 + my))
+    space = measure(" ", hook_style, px)
+    box_w = (
+        max(
+            (
+                sum(measure(words[i], hook_style, px) for i in line) + space * (len(line) - 1)
+                for line in lines
+            ),
+            default=0.0,
+        )
+        + pad
+    )
+    x0 = (width - box_w) / 2
+    top_y = height * HOOK_TOP_RATIO
+    if avoid:
+        best, best_overlap = top_y, None
+        for ratio in (HOOK_TOP_RATIO, 0.15, 0.17, HOOK_TOP_MIN_RATIO, HOOK_TOP_MAX_RATIO):
+            cand = height * ratio
+            overlap = _overlaps((x0, cand, x0 + box_w, cand + block_h), avoid)
+            if overlap <= 0:
+                best = cand
+                break
+            if best_overlap is None or overlap < best_overlap:
+                best, best_overlap = cand, overlap
+        top_y = best
+    return HookLayout(words, lines, px, top_y, top_y + block_h, end_s)
+
+
+def _add_hook(
+    subs: pysubs2.SSAFile,
+    hook: HookSpec,
+    style: CaptionStyle,
+    *,
+    width: int,
+    scale: float,
+    layout: HookLayout,
+) -> None:
+    boxed = hook.style == "box"
+    words, lines, px = layout.words, layout.lines, layout.px
 
     ass = pysubs2.SSAStyle()
     ass.fontname = style.font
     ass.fontsize = px
     ass.bold = True
     ass.alignment = pysubs2.Alignment.TOP_CENTER
-    ass.marginv = round(height * HOOK_TOP_RATIO)
+    ass.marginv = round(layout.top_y)
     ass.marginl = ass.marginr = round(width * 0.08)
     if boxed:
         # Opaque box in the accent colour with dark text.
@@ -612,26 +717,31 @@ def _add_hook(
         ass.primarycolor = hex_to_ass("#111111")
         ass.outlinecolor = hex_to_ass(hook.accent)
         ass.backcolor = hex_to_ass(hook.accent)
-        ass.outline = 22 * scale
+        ass.outline = HOOK_BOX_PAD * scale
         ass.shadow = 0
     else:
         ass.borderstyle = 1
         ass.primarycolor = hex_to_ass(hook.primary)
         ass.outlinecolor = hex_to_ass("#000000")
-        ass.backcolor = hex_to_ass("#000000", alpha=150)
-        ass.outline = 10 * scale
-        ass.shadow = 4 * scale
+        ass.backcolor = hex_to_ass("#000000", alpha=110)
+        ass.outline = HOOK_OUTLINE * scale
+        ass.shadow = HOOK_SHADOW * scale
     subs.styles[HOOK_STYLE_NAME] = ass
 
     body = "\\N".join(" ".join(words[i] for i in line) for line in lines)
     if not boxed and len(words) > 1:
         # Accent word: the last one, coloured via an inline override.
         body = _accent_last(body, words[-1], hook.accent)
-    anim = f"{{\\fad(160,{HOOK_FADE_OUT_MS})\\fscx88\\fscy88\\t(0,240,\\fscx100\\fscy100)}}"
+    # Fully visible from frame 0 (no fade-in); only a short fade-out at the end.
+    # \an8\pos pins the top edge of the text block and centres it horizontally.
+    anim = (
+        f"{{\\an8\\pos({width // 2},{round(layout.top_y)})"
+        f"\\fad(0,{HOOK_FADE_OUT_MS})\\fscx94\\fscy94\\t(0,200,\\fscx100\\fscy100)}}"
+    )
     subs.events.append(
         pysubs2.SSAEvent(
             start=0,
-            end=pysubs2.make_time(s=hook_duration(hook, clip_duration_s)),
+            end=pysubs2.make_time(s=layout.end_s),
             text=anim + body,
             style=HOOK_STYLE_NAME,
             layer=2,
@@ -711,7 +821,9 @@ def _render_word(
         tags += f"\\c{ass_colour_override(style.accent)}\\fscx{style.scale_percent}"
         tags += f"\\fscy{style.scale_percent}"
     elif keyword and style.animation != "none":
-        tags += f"\\c{ass_colour_override(KEYWORD_COLOUR)}\\fscx{KEYWORD_SCALE}\\fscy{KEYWORD_SCALE}"
+        tags += (
+            f"\\c{ass_colour_override(KEYWORD_COLOUR)}\\fscx{KEYWORD_SCALE}\\fscy{KEYWORD_SCALE}"
+        )
     if not tags:
         return text
     return f"{{{tags}}}{text}{{\\r{size_tag}}}"
@@ -795,10 +907,7 @@ def _pop_events(
     events: list[pysubs2.SSAEvent] = []
     for index, word in enumerate(group.words):
         colour = f"\\c{ass_colour_override(KEYWORD_COLOUR)}" if flags[index] else ""
-        text = (
-            f"{{\\fscx70\\fscy70{size_tag}{colour}"
-            f"\\t(0,110,\\fscx100\\fscy100)}}{texts[index]}"
-        )
+        text = f"{{\\fscx70\\fscy70{size_tag}{colour}\\t(0,110,\\fscx100\\fscy100)}}{texts[index]}"
         events.append(_event(word.start, max(word.end, word.start + 0.12), text, offset))
     return events
 

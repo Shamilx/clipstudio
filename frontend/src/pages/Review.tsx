@@ -18,6 +18,8 @@ import {
 import { CaptionEditor } from '../components/CaptionEditor'
 import { ClipPlayer } from '../components/ClipPlayer'
 import { ErrorNote } from '../components/ErrorNote'
+import { HookPanel } from '../components/HookPanel'
+import { ResultsPanel } from '../components/ResultsPanel'
 import { TrimBar } from '../components/TrimBar'
 import { QaBadge } from '../components/QaBadge'
 import { QualityBadge } from '../components/QualityBadge'
@@ -536,6 +538,7 @@ export function Review() {
               >
                 {panelTab === 'details' && (
                   <div className="flex flex-col gap-5">
+                    <HookPanel clip={selected} onSaved={patchClip} />
                     <ShortsMeta clip={selected} onSaved={patchClip} />
 
                     <div>
@@ -543,11 +546,6 @@ export function Review() {
                       <p className="mt-1 text-[13px] leading-relaxed">
                         {selected.reason || 'No rationale returned for this clip.'}
                       </p>
-                      {selected.hook && (
-                        <p className="mt-2 border-l-2 border-line-strong pl-3 text-[13px] text-muted">
-                          Hook: {selected.hook}
-                        </p>
-                      )}
                       <div className="mt-3 flex gap-4 text-xs tabular-nums text-muted">
                         <span>
                           Score <span className="text-fg">{selected.score}</span>
@@ -560,6 +558,8 @@ export function Review() {
                         </span>
                       </div>
                     </div>
+
+                    <ResultsPanel clip={selected} />
 
                     {selected.exports.length > 0 ? (
                       <QualityPanel

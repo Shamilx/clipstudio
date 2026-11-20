@@ -177,6 +177,10 @@ class Clip:
     #: Why the user rejected the clip (one of REJECT_REASONS, or "") + free text.
     reject_reason: str = ""
     reject_note: str = ""
+    #: Alternative on-screen hook (runner-up of the hook writers' room) and every
+    #: judged candidate: ``{"text", "formula", "score", "scores", "rejected"?}``.
+    hook_alt: str = ""
+    hook_candidates: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def duration_s(self) -> float:
@@ -206,6 +210,45 @@ class Clip:
             heuristic_score=row["heuristic_score"],
             reject_reason=row["reject_reason"],
             reject_note=row["reject_note"],
+            hook_alt=row["hook_alt"],
+            hook_candidates=json.loads(row["hook_candidates_json"] or "[]"),
+        )
+
+
+Platform = Literal["youtube", "tiktok", "instagram"]
+PLATFORMS = ("youtube", "tiktok", "instagram")
+
+
+@dataclass
+class ClipResult:
+    """Performance of a posted clip on one platform, with the hook that was used."""
+
+    id: str
+    clip_id: str
+    platform: Platform
+    hook: str = ""
+    formula: str = ""
+    views: int = 0
+    #: YouTube Shorts "viewed vs swiped away" (percent viewed), 0-100.
+    viewed_pct: float | None = None
+    #: Average view duration as a percent of the clip length, 0-100.
+    avg_view_pct: float | None = None
+    days_live: int = 1
+    recorded_at: str = field(default_factory=utcnow)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ClipResult:
+        return cls(
+            id=row["id"],
+            clip_id=row["clip_id"],
+            platform=row["platform"],
+            hook=row["hook"],
+            formula=row["formula"],
+            views=row["views"],
+            viewed_pct=row["viewed_pct"],
+            avg_view_pct=row["avg_view_pct"],
+            days_live=row["days_live"],
+            recorded_at=row["recorded_at"],
         )
 
 

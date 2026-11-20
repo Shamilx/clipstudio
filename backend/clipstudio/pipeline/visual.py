@@ -348,9 +348,7 @@ def build_timeline(
 ) -> list[VisualMoment]:
     """Compute (or load) the visual timeline for ``video``. Never raises."""
     try:
-        return _build_timeline(
-            video, duration_s, cache, max_duration_s, on_progress, cancelled
-        )
+        return _build_timeline(video, duration_s, cache, max_duration_s, on_progress, cancelled)
     except Exception as exc:  # noqa: BLE001
         log.warning("Visual analysis failed (%s); continuing without it.", exc)
         return []
@@ -376,17 +374,47 @@ def keyframe_shots(video: Path, span_s: float) -> list[Shot]:
 
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
-             "-show_entries", "frame=pts_time", "-of", "csv=p=0", str(video)],
-            capture_output=True, text=True, timeout=600, check=True,
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-skip_frame",
+                "nokey",
+                "-show_entries",
+                "frame=pts_time",
+                "-of",
+                "csv=p=0",
+                str(video),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=True,
         )
         cells = (x.strip().strip(",") for x in probe.stdout.split())
         times = [float(x) for x in cells if x and x != "N/A"]
         raw = subprocess.run(
-            ["ffmpeg", "-v", "error", "-skip_frame", "nokey", "-i", str(video),
-             "-vf", f"scale={_KF_W}:{_KF_H},format=gray", "-fps_mode", "passthrough",
-             "-f", "rawvideo", "-"],
-            capture_output=True, timeout=600, check=True,
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-skip_frame",
+                "nokey",
+                "-i",
+                str(video),
+                "-vf",
+                f"scale={_KF_W}:{_KF_H},format=gray",
+                "-fps_mode",
+                "passthrough",
+                "-f",
+                "rawvideo",
+                "-",
+            ],
+            capture_output=True,
+            timeout=600,
+            check=True,
         ).stdout
     except Exception as exc:  # noqa: BLE001 - fall back to the full decode
         log.warning("Keyframe shot detection failed (%s); using full decode.", exc)

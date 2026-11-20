@@ -8,7 +8,16 @@ pytestmark = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg m
 
 
 def _make(path, video, audio, dur=12):
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"{video}{chr(58) if chr(61) in video else chr(61)}size=360x640:rate=15:duration={dur}"]
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"{video}{chr(58) if chr(61) in video else chr(61)}size=360x640:rate=15:duration={dur}",
+    ]
     if audio:
         cmd += ["-f", "lavfi", "-i", audio, "-shortest", "-c:a", "aac"]
     cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)]

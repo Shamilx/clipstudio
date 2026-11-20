@@ -46,7 +46,8 @@ async def delete_template(name: str) -> None:
     if not tpl.is_user(name):
         raise HTTPException(
             status_code=404 if not tpl.is_builtin(name) else 400,
-            detail="Built-in templates cannot be deleted." if tpl.is_builtin(name)
+            detail="Built-in templates cannot be deleted."
+            if tpl.is_builtin(name)
             else "User template not found.",
         )
     await asyncio.to_thread(tpl.delete_template, name)

@@ -296,8 +296,12 @@ class BatchQueue:
                     )
                 elif job.status in FINISHED:
                     await asyncio.to_thread(
-                        update_item, it.id, status=job.status, progress=job.progress,
-                        stage=job.current_stage, error=job.error,
+                        update_item,
+                        it.id,
+                        status=job.status,
+                        progress=job.progress,
+                        stage=job.current_stage,
+                        error=job.error,
                     )
                 elif it.progress != job.progress or it.stage != job.current_stage:
                     await asyncio.to_thread(
@@ -320,9 +324,7 @@ class BatchQueue:
                     await asyncio.to_thread(update_item, ready.id, status="running", job_id=job_id)
                 except Exception as exc:
                     log.exception("Could not create job for queue item %s.", ready.id)
-                    await asyncio.to_thread(
-                        update_item, ready.id, status="failed", error=str(exc)
-                    )
+                    await asyncio.to_thread(update_item, ready.id, status="failed", error=str(exc))
 
         # 3. prefetch: at most one download, and at most one finished download waiting
         items = await asyncio.to_thread(list_items)
@@ -355,8 +357,12 @@ class BatchQueue:
             self._removed.discard(item.id)
             return
         await asyncio.to_thread(
-            update_item, item.id, status="ready", source_id=source.id,
-            title=source.title, stage="",
+            update_item,
+            item.id,
+            status="ready",
+            source_id=source.id,
+            title=source.title,
+            stage="",
         )
 
     async def wait_idle(self) -> None:  # test helper

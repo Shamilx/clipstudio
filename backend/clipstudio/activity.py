@@ -203,7 +203,7 @@ def service_name(base_url: str | None, fallback: str = "LLM") -> str:
 
 
 def describe(provider, *, fallback: bool = False) -> str:
-    """"Groq (gpt-oss-120b)" style label for a provider (or its fallback)."""
+    """ "Groq (gpt-oss-120b)" style label for a provider (or its fallback)."""
     if fallback and getattr(provider, "fallback_model", None):
         url = getattr(provider, "fallback_base_url", None) or getattr(provider, "base_url", None)
         model = provider.fallback_model

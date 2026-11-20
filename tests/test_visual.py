@@ -16,7 +16,11 @@ from clipstudio.providers.base import (
     render_window_prompt,
 )
 
-MOMENTS = [(5.0, "model walks the runway", True), (70.0, "host laughs", False), (200.0, "far", False)]
+MOMENTS = [
+    (5.0, "model walks the runway", True),
+    (70.0, "host laughs", False),
+    (200.0, "far", False),
+]
 
 
 class TestPlan:
@@ -66,12 +70,12 @@ class TestSpeechlessClip:
         words = [Word("hello", 0.0, 0.5), Word("bye.", 59.0, 59.5)]
         transcript = Transcript(words=words, language="en")
         cand = ClipCandidate(start_s=10, end_s=40, title="Runway", score=80)
-        clips = highlights.build_clips(
-            transcript, [cand], DetectionConfig(min_keep=1), job_id="j"
-        )
+        clips = highlights.build_clips(transcript, [cand], DetectionConfig(min_keep=1), job_id="j")
         assert len(clips) == 1
         assert (clips[0].start_s, clips[0].end_s) == (10, 40)
-        assert highlights.clip_words(transcript, 10, 40, clips[0].start_word, clips[0].end_word) == []
+        assert (
+            highlights.clip_words(transcript, 10, 40, clips[0].start_word, clips[0].end_word) == []
+        )
 
 
 class TestTimeline:

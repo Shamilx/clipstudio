@@ -16,6 +16,7 @@ changes between ffmpeg versions.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import queue
@@ -336,10 +337,8 @@ class _Pipes:
 
 
 def _kill(proc: subprocess.Popen[str]) -> None:
-    try:
+    with contextlib.suppress(OSError):
         proc.kill()
-    except OSError:
-        pass
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:  # pragma: no cover - kill is not catchable

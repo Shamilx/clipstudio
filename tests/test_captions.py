@@ -236,6 +236,81 @@ def test_caption_events_never_overlap() -> None:
     subs = captions.build_ass(words, captions.get_style("yellow_pop"), width=720, height=1280)
     events = sorted(subs.events, key=lambda e: e.start)
     assert events
-    for a, b in zip(events, events[1:]):
+    for a, b in zip(events, events[1:], strict=False):
         assert a.end <= b.start
         assert a.end > a.start
+
+
+class TestHookCard:
+    HOOK = "Saint Nic went all out for his mom"
+
+    def _events(self, **kw):
+        spec = captions.HookSpec(text=kw.pop("text", self.HOOK), style=kw.pop("style", "plain"))
+        subs = captions.build_ass(
+            kw.pop("words", []), captions.PRESETS["yellow_pop"], width=720, height=1280,
+            hook=spec, **kw,
+        )  # fmt: skip
+        ev = [e for e in subs.events if e.style == captions.HOOK_STYLE_NAME]
+        assert len(ev) == 1
+        return subs, ev[0]
+
+    def test_visible_from_first_frame_with_fade_out_only(self) -> None:
+        _, ev = self._events()
+        assert ev.start == 0
+        assert "\\fad(0," in ev.text  # no fade-in
+        assert "\\fad(160" not in ev.text
+
+    def test_default_duration_2_5_to_3_seconds(self) -> None:
+        _, ev = self._events(clip_duration_s=40.0)
+        assert 2500 <= ev.end <= 3000
+
+    def test_explicit_duration_is_respected(self) -> None:
+        spec = captions.HookSpec(text="Wait what", duration_s=3.6)
+        subs = captions.build_ass([], captions.PRESETS["clean"], width=720, height=1280, hook=spec)
+        ev = [e for e in subs.events if e.style == captions.HOOK_STYLE_NAME][0]
+        assert ev.end == 3600
+
+    def test_size_position_and_two_lines_max(self) -> None:
+        subs, ev = self._events()
+        st = subs.styles[captions.HOOK_STYLE_NAME]
+        assert st.fontsize <= round(1280 * captions.HOOK_SIZE_RATIO)
+        assert ev.text.count("\\N") <= 1  # at most 2 lines
+        assert "\\an8\\pos(360,205)" in ev.text  # centred, top edge at 16% of 1280
+        assert st.outline >= 9 and st.shadow > 0  # heavy outline + shadow
+
+    def test_long_text_still_two_lines_in_box_style(self) -> None:
+        _, ev = self._events(
+            text="This is a really long hook line that keeps going and going", style="box"
+        )
+        assert ev.text.count("\\N") <= 1
+
+    def test_hook_renders_without_words(self) -> None:
+        subs, _ = self._events(words=[])
+        assert len(subs.events) == 1
+
+    def test_captions_stay_below_hook_while_it_is_up(self) -> None:
+        import re
+
+        from clipstudio.pipeline.placement import ZoneSegment
+
+        # A face that pushes captions upwards, during the hook.
+        zone = ZoneSegment(0.0, 10.0, faces=[(0.5, 150.0, 760.0, 570.0, 1100.0)])
+        words = evenly_spaced(["watch", "this", "now"], step=0.5)
+        subs, hook_ev = self._events(words=words, zones=[zone], clip_duration_s=10.0)
+        layout_bottom = 205 + 2 * 60 * 1.22  # conservative: 2 lines at >= 60 px
+        for e in subs.events:
+            if e.style == captions.HOOK_STYLE_NAME or e.start >= hook_ev.end:
+                continue
+            m = re.search(r"\\pos\(\d+,(\d+)\)", e.text)
+            if m:  # \an2: y is the bottom edge of the caption block
+                assert int(m.group(1)) - 70 >= layout_bottom - 1
+
+    def test_hook_moves_within_14_to_18_percent_off_a_face(self) -> None:
+        import re
+
+        from clipstudio.pipeline.placement import ZoneSegment
+
+        zone = ZoneSegment(0.0, 10.0, faces=[(0.5, 100.0, 150.0, 620.0, 330.0)])
+        _, ev = self._events(zones=[zone], clip_duration_s=10.0)
+        y = int(re.search(r"\\pos\(\d+,(\d+)\)", ev.text).group(1))
+        assert round(1280 * 0.14) <= y <= round(1280 * 0.18)

@@ -79,6 +79,7 @@ class JobSettingsIn(BaseModel):
     normalize_audio: bool | None = None
     background_music: bool | None = None
     burn_captions: bool | None = None
+    teaser: bool | None = None
 
 
 RejectReason = Literal[
@@ -182,6 +183,14 @@ class ExportOut(BaseModel):
         )
 
 
+class HookCandidateOut(BaseModel):
+    text: str
+    formula: str = ""
+    score: float | None = None  # judge's mean, 0-10
+    scores: dict[str, float] = Field(default_factory=dict)
+    rejected: str = ""
+
+
 class ClipOut(BaseModel):
     id: str
     job_id: str
@@ -203,6 +212,8 @@ class ClipOut(BaseModel):
     heuristic_score: int = 0
     reject_reason: str = ""
     reject_note: str = ""
+    hook_alt: str = ""
+    hook_candidates: list[HookCandidateOut] = Field(default_factory=list)
     caption_style: str = "yellow_pop"
     ratio: str = "9:16"
     exports: list[ExportOut] = Field(default_factory=list)
@@ -236,6 +247,18 @@ class ClipOut(BaseModel):
             heuristic_score=clip.heuristic_score,
             reject_reason=clip.reject_reason,
             reject_note=clip.reject_note,
+            hook_alt=clip.hook_alt,
+            hook_candidates=[
+                HookCandidateOut(
+                    text=str(c.get("text", "")),
+                    formula=str(c.get("formula", "")),
+                    score=c.get("score"),
+                    scores=c.get("scores") or {},
+                    rejected=str(c.get("rejected", "")),
+                )
+                for c in clip.hook_candidates
+                if isinstance(c, dict) and c.get("text")
+            ],
             caption_style=edit.caption_style if edit else "yellow_pop",
             ratio=edit.ratio if edit else "9:16",
             exports=[ExportOut.of(e) for e in (exports or [])],
@@ -246,6 +269,8 @@ class ClipPatchIn(BaseModel):
     start_s: float | None = Field(default=None, ge=0)
     end_s: float | None = Field(default=None, gt=0)
     title: str | None = None
+    #: The active on-screen hook; the next export renders it.
+    hook: str | None = Field(default=None, max_length=80)
     description: str | None = None
     hashtags: list[str] | None = None
     status: Literal["candidate", "kept", "discarded", "exported"] | None = None
@@ -357,3 +382,50 @@ class SystemOut(BaseModel):
     gpu_name: str | None
     compute_type: str
     diarization_available: bool
+
+
+class ResultIn(BaseModel):
+    """Performance of a posted clip on one platform."""
+
+    platform: Literal["youtube", "tiktok", "instagram"]
+    views: int = Field(default=0, ge=0)
+    #: YouTube Shorts "viewed vs swiped away", percent (0-100).
+    viewed_pct: float | None = Field(default=None, ge=0, le=100)
+    #: Average view duration as a percent of the clip length (0-100).
+    avg_view_pct: float | None = Field(default=None, ge=0, le=100)
+    days_live: int = Field(default=1, ge=1, le=3650)
+    #: Which hook was on the posted video; defaults to the clip's active hook.
+    hook: str | None = Field(default=None, max_length=80)
+
+
+class ResultOut(BaseModel):
+    id: str
+    clip_id: str
+    platform: str
+    hook: str
+    formula: str
+    views: int
+    viewed_pct: float | None
+    avg_view_pct: float | None
+    days_live: int
+    recorded_at: str
+    #: 0-100 score used to rank hooks (see ``hookroom.score_result``).
+    score: float
+
+    @classmethod
+    def of(cls, r: models.ClipResult) -> ResultOut:
+        from ..pipeline.hookroom import score_result
+
+        return cls(
+            id=r.id,
+            clip_id=r.clip_id,
+            platform=r.platform,
+            hook=r.hook,
+            formula=r.formula,
+            views=r.views,
+            viewed_pct=r.viewed_pct,
+            avg_view_pct=r.avg_view_pct,
+            days_live=r.days_live,
+            recorded_at=r.recorded_at,
+            score=round(score_result(r.__dict__), 1),
+        )

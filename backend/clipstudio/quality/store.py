@@ -28,7 +28,14 @@ def save(clip_id: str, job_id: str, export_id: str | None, report: dict) -> None
         _ensure(conn)
         conn.execute(
             "INSERT OR REPLACE INTO clip_quality VALUES (?,?,?,?,?,?,datetime('now'))",
-            (clip_id, job_id, export_id, report["status"], int(report["score"]), json.dumps(report)),
+            (
+                clip_id,
+                job_id,
+                export_id,
+                report["status"],
+                int(report["score"]),
+                json.dumps(report),
+            ),
         )
 
 

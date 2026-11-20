@@ -60,6 +60,7 @@ export interface Job {
   more_count?: number | null
   /** False when word captions are not burned (footage already has subtitles). */
   burn_captions?: boolean
+  teaser?: boolean
 }
 
 export interface ExportRecord {
@@ -89,6 +90,42 @@ export const REJECT_REASONS: { value: RejectReason; label: string }[] = [
   { value: 'other', label: 'Other' },
 ]
 
+export interface HookCandidate {
+  text: string
+  formula: string
+  /** Judge's mean score, 0-10 (null when unjudged). */
+  score: number | null
+  scores: Record<string, number>
+  /** Why code rejected it ("" = valid). */
+  rejected: string
+}
+
+export type ResultPlatform = 'youtube' | 'tiktok' | 'instagram'
+
+export interface ClipResult {
+  id: string
+  clip_id: string
+  platform: ResultPlatform
+  hook: string
+  formula: string
+  views: number
+  viewed_pct: number | null
+  avg_view_pct: number | null
+  days_live: number
+  recorded_at: string
+  /** 0-100 score used to rank hooks. */
+  score: number
+}
+
+export interface ClipResultInput {
+  platform: ResultPlatform
+  views: number
+  viewed_pct?: number | null
+  avg_view_pct?: number | null
+  days_live?: number
+  hook?: string
+}
+
 export interface Clip {
   id: string
   job_id: string
@@ -100,6 +137,9 @@ export interface Clip {
   end_word: number
   title: string
   hook: string
+  /** Alternative on-screen hook (runner-up of the hook writers' room). */
+  hook_alt?: string
+  hook_candidates?: HookCandidate[]
   score: number
   reason: string
   status: ClipStatus
@@ -183,6 +223,7 @@ export interface EditToggles {
   normalize_audio: boolean
   background_music: boolean
   burn_captions: boolean
+  teaser: boolean
 }
 
 export const EDIT_LABELS: Record<keyof EditToggles, [string, string]> = {
@@ -194,6 +235,7 @@ export const EDIT_LABELS: Record<keyof EditToggles, [string, string]> = {
   normalize_audio: ['Normalize loudness', 'About -14 LUFS'],
   background_music: ['Background music', 'Needs royalty-free tracks in the music/ folder'],
   burn_captions: ['Burn captions', 'Turn off if the video already has subtitles (hook stays)'],
+  teaser: ['Teaser opening', 'Shows 1-1.5 s of the best moment first, then the story'],
 }
 
 export interface Settings {
@@ -494,6 +536,7 @@ export const api = {
       start_s?: number
       end_s?: number
       title?: string
+      hook?: string
       description?: string
       hashtags?: string[]
       status?: ClipStatus
@@ -501,6 +544,17 @@ export const api = {
       reject_note?: string
     },
   ) => request<Clip>(`/api/clips/${clipId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  swapHook: (clipId: string) => request<Clip>(`/api/clips/${clipId}/hook/swap`, { method: 'POST' }),
+
+  listResults: (clipId: string) => request<ClipResult[]>(`/api/clips/${clipId}/results`),
+  addResult: (clipId: string, body: ClipResultInput) =>
+    request<ClipResult>(`/api/clips/${clipId}/results`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteResult: (clipId: string, resultId: string) =>
+    request<void>(`/api/clips/${clipId}/results/${resultId}`, { method: 'DELETE' }),
 
   patchCaptions: (
     clipId: string,

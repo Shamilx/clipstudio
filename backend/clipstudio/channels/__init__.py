@@ -125,8 +125,16 @@ def parse_listing(info: dict[str, Any], filters: Filters) -> tuple[list[Candidat
             live
             or "/shorts/" in url
             or (dur is not None and dur < SHORTS_MAX_S)
-            or (filters.min_duration_s is not None and dur is not None and dur < filters.min_duration_s)
-            or (filters.max_duration_s is not None and dur is not None and dur > filters.max_duration_s)
+            or (
+                filters.min_duration_s is not None
+                and dur is not None
+                and dur < filters.min_duration_s
+            )
+            or (
+                filters.max_duration_s is not None
+                and dur is not None
+                and dur > filters.max_duration_s
+            )
             or (filters.include_keywords and not any(k in low for k in filters.include_keywords))
             or any(k in low for k in filters.exclude_keywords)
         )
@@ -158,10 +166,22 @@ def fetch_listing(url: str) -> dict[str, Any]:
 
 # -- persistence -------------------------------------------------------------
 
-_COLS = (
-    "id url title template interval_min min_duration_s max_duration_s include_keywords "
-    "exclude_keywords enabled added_at last_checked last_error enqueued_count"
-).split()
+_COLS = [
+    "id",
+    "url",
+    "title",
+    "template",
+    "interval_min",
+    "min_duration_s",
+    "max_duration_s",
+    "include_keywords",
+    "exclude_keywords",
+    "enabled",
+    "added_at",
+    "last_checked",
+    "last_error",
+    "enqueued_count",
+]
 
 
 def _ensure() -> None:
@@ -190,8 +210,10 @@ def get_channel(channel_id: str) -> dict[str, Any] | None:
 
 def _filters(ch: dict[str, Any]) -> Filters:
     return Filters(
-        ch["min_duration_s"], ch["max_duration_s"],
-        split_keywords(ch["include_keywords"]), split_keywords(ch["exclude_keywords"]),
+        ch["min_duration_s"],
+        ch["max_duration_s"],
+        split_keywords(ch["include_keywords"]),
+        split_keywords(ch["exclude_keywords"]),
     )
 
 
@@ -255,10 +277,17 @@ def add_channel(
             " max_duration_s, include_keywords, exclude_keywords, added_at, last_checked)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
-                cid, url, title[:120], template or "auto", _clean_interval(interval_min),
-                _clean_dur(min_duration_s), _clean_dur(max_duration_s),
+                cid,
+                url,
+                title[:120],
+                template or "auto",
+                _clean_interval(interval_min),
+                _clean_dur(min_duration_s),
+                _clean_dur(max_duration_s),
                 ",".join(split_keywords(include_keywords)),
-                ",".join(split_keywords(exclude_keywords)), utcnow(), time.time(),
+                ",".join(split_keywords(exclude_keywords)),
+                utcnow(),
+                time.time(),
             ),
         )
     _mark_seen(cid, ids)
@@ -381,7 +410,16 @@ class ChannelWatcher:
 watcher = ChannelWatcher()
 
 __all__ = [
-    "ChannelError", "Filters", "add_channel", "check_channel", "delete_channel",
-    "get_channel", "list_channels", "normalize_channel_url", "parse_listing", "update_channel",
-    "watcher", "asdict",
+    "ChannelError",
+    "Filters",
+    "add_channel",
+    "check_channel",
+    "delete_channel",
+    "get_channel",
+    "list_channels",
+    "normalize_channel_url",
+    "parse_listing",
+    "update_channel",
+    "watcher",
+    "asdict",
 ]

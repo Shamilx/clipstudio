@@ -14,6 +14,7 @@ from . import connection
 from .models import (
     Clip,
     ClipEdit,
+    ClipResult,
     ClipStatus,
     Export,
     Job,
@@ -256,8 +257,9 @@ _CLIP_INSERT = """
     INSERT INTO clips (id, job_id, rank, start_s, end_s, start_word, end_word,
                        title, hook, score, reason, status, user_trimmed, created_at,
                        description, hashtags_json, emphasis_json, llm_score,
-                       heuristic_score, reject_reason, reject_note)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       heuristic_score, reject_reason, reject_note, hook_alt,
+                       hook_candidates_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -284,6 +286,8 @@ def _clip_row(c: Clip) -> tuple:
         c.heuristic_score,
         c.reject_reason,
         c.reject_note,
+        c.hook_alt,
+        json.dumps(c.hook_candidates, ensure_ascii=False),
     )
 
 
@@ -342,8 +346,12 @@ def update_clip(
     hook: str | None = None,
     reject_reason: str | None = None,
     reject_note: str | None = None,
+    hook_alt: str | None = None,
+    hook_candidates: list[dict[str, Any]] | None = None,
 ) -> None:
     fields: dict[str, Any] = {}
+    if hook_candidates is not None:
+        fields["hook_candidates_json"] = json.dumps(hook_candidates, ensure_ascii=False)
     if hashtags is not None:
         fields["hashtags_json"] = json.dumps(hashtags, ensure_ascii=False)
     for name, value in (
@@ -357,6 +365,7 @@ def update_clip(
         ("status", status),
         ("reject_reason", reject_reason),
         ("reject_note", reject_note),
+        ("hook_alt", hook_alt),
     ):
         if value is not None:
             fields[name] = value
@@ -372,6 +381,66 @@ def update_clip(
             f"UPDATE clips SET {assignments} WHERE id = ?",
             (*fields.values(), clip_id),
         )
+
+
+# --------------------------------------------------------------------------
+# Clip results (performance of posted clips)
+# --------------------------------------------------------------------------
+
+
+def add_clip_result(result: ClipResult) -> ClipResult:
+    with connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO clip_results (id, clip_id, platform, hook, formula, views,
+                                      viewed_pct, avg_view_pct, days_live, recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                result.id,
+                result.clip_id,
+                result.platform,
+                result.hook,
+                result.formula,
+                result.views,
+                result.viewed_pct,
+                result.avg_view_pct,
+                result.days_live,
+                result.recorded_at,
+            ),
+        )
+    return result
+
+
+def list_clip_results(clip_id: str) -> list[ClipResult]:
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM clip_results WHERE clip_id = ? ORDER BY recorded_at DESC, rowid DESC",
+            (clip_id,),
+        ).fetchall()
+    return [ClipResult.from_row(r) for r in rows]
+
+
+def delete_clip_result(clip_id: str, result_id: str) -> bool:
+    with connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM clip_results WHERE id = ? AND clip_id = ?", (result_id, clip_id)
+        )
+    return cur.rowcount > 0
+
+
+def list_hook_results() -> list[dict[str, Any]]:
+    """Every recorded result as a dict (with the clip title), for hook learning."""
+    with connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.hook, r.formula, r.platform, r.views, r.viewed_pct, r.avg_view_pct,
+                   r.days_live, r.recorded_at, c.title
+            FROM clip_results r JOIN clips c ON c.id = r.clip_id
+            ORDER BY r.recorded_at DESC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # --------------------------------------------------------------------------

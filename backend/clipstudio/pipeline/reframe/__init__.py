@@ -236,8 +236,11 @@ def build_crop_path(
         active=active,
         faces=[
             {
-                "t": round(o.t, 2), "x0": round(o.left, 1), "y0": round(o.top, 1),
-                "x1": round(o.right, 1), "y1": round(o.bottom, 1),
+                "t": round(o.t, 2),
+                "x0": round(o.left, 1),
+                "y0": round(o.top, 1),
+                "x1": round(o.right, 1),
+                "y1": round(o.bottom, 1),
             }
             for o in observations
         ],

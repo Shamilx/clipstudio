@@ -41,7 +41,7 @@ class Template:
     font: str = "Montserrat ExtraBold"
     hook_card: bool = True
     hook_style: str = "plain"
-    hook_duration_s: float = 4.5
+    hook_duration_s: float = 2.8
     zoom_strength: float = 1.1
     zoom_min_gap_s: float = 4.0
     max_emoji: int = 2

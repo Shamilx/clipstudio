@@ -70,13 +70,17 @@ class OpenAIProvider(LLMProvider):
             )
             text = str(exc).lower()
             reason = (
-                "rate limit" if "429" in text or "rate limit" in text
-                else "timeout" if "timed out" in text or "timeout" in text
+                "rate limit"
+                if "429" in text or "rate limit" in text
+                else "timeout"
+                if "timed out" in text or "timeout" in text
                 else str(exc)[:60]
             )
             primary_label = activity.describe(self)
             fallback_label = activity.describe(self, fallback=True)
-            activity.relabel(f"{primary_label} failed ({reason}) → falling back to {fallback_label}")
+            activity.relabel(
+                f"{primary_label} failed ({reason}) → falling back to {fallback_label}"
+            )
         # A sibling instance keeps concurrent windows from sharing mutable state.
         fallback = OpenAIProvider(
             self.fallback_model,
