@@ -1,0 +1,49 @@
+name: clipstudio
+
+services:
+  clipstudio:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: base
+    image: clipstudio:latest
+    ports:
+      # Bound to loopback: ClipStudio has no authentication, so it must not be
+      # reachable from the network by default. Change to "8000:8000" only on a
+      # network you trust.
+      - '127.0.0.1:8000:8000'
+    volumes:
+      - clipstudio-data:/data
+      # Drop source files here to ingest them without uploading through the UI.
+      - ./media:/media:ro
+    environment:
+      CLIPSTUDIO_HOME: /data
+    restart: unless-stopped
+
+  # docker compose --profile gpu up
+  clipstudio-gpu:
+    profiles: ['gpu']
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: gpu
+    image: clipstudio:gpu
+    ports:
+      - '127.0.0.1:8000:8000'
+    volumes:
+      - clipstudio-data:/data
+      - ./media:/media:ro
+    environment:
+      CLIPSTUDIO_HOME: /data
+      NVIDIA_VISIBLE_DEVICES: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  clipstudio-data:

@@ -1,0 +1,12 @@
+ClipStudio bundles the following third-party assets.
+
+Bundled fonts, all under the SIL Open Font License 1.1
+(text in backend/clipstudio/assets/fonts/OFL.txt):
+- Montserrat ExtraBold, Copyright The Montserrat Project Authors
+- Inter (variable), Copyright The Inter Project Authors
+- Anton, Copyright The Anton Project Authors
+
+Bundled emoji images: Noto Emoji (Google), Apache License 2.0
+(Apache-2.0 text in backend/clipstudio/assets/emoji/LICENSE-noto-emoji.txt), from
+https://github.com/googlefonts/noto-emoji (tag v2.047, png/128).
+Bundled sound effects are synthesized with ffmpeg for this project.

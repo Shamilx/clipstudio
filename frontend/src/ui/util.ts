@@ -1,0 +1,24 @@
+export function cn(...parts: (string | false | null | undefined | 0)[]): string {
+  return parts.filter(Boolean).join(' ')
+}
+
+/** Server times are UTC; naive timestamps are treated as UTC. */
+export function parseUtc(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const t = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`)
+  return Number.isNaN(t) ? null : t
+}
+
+export function relativeTime(iso: string | null | undefined, now = Date.now()): string {
+  const t = parseUtc(iso)
+  if (t === null) return '-'
+  const s = Math.max(0, Math.round((now - t) / 1000))
+  if (s < 45) return 'just now'
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} h ago`
+  const d = Math.round(h / 24)
+  if (d < 30) return `${d} d ago`
+  return new Date(t).toLocaleDateString()
+}

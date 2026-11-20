@@ -1,0 +1,359 @@
+"""Pydantic request and response models for the REST API.
+
+Kept separate from the dataclasses in ``db.models``: those mirror SQLite rows,
+these are the wire contract. Splitting them means a schema change doesn't
+silently reshape the API, and the API can expose derived fields (durations,
+export URLs) that don't belong in storage.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+from ..db import models
+
+
+class SourceOut(BaseModel):
+    id: str
+    type: str
+    title: str
+    url: str | None = None
+    filename: str | None = None
+    channel: str | None = None
+    duration_s: float
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    has_audio: bool
+    has_video: bool
+    created_at: str
+
+    @classmethod
+    def of(cls, source: models.Source) -> SourceOut:
+        # Built field by field rather than from vars(): the row carries an
+        # absolute filesystem path that has no business leaving the process.
+        return cls(
+            id=source.id,
+            type=source.type,
+            title=source.title,
+            url=source.url,
+            filename=source.filename,
+            channel=source.channel,
+            duration_s=source.duration_s,
+            width=source.width,
+            height=source.height,
+            fps=source.fps,
+            has_audio=source.has_audio,
+            has_video=source.has_video,
+            created_at=source.created_at,
+        )
+
+
+class YouTubeIngestIn(BaseModel):
+    url: str
+    cookies_from_browser: str | None = None
+    #: Client-chosen id; poll ``GET /api/sources/progress/{id}`` for download progress.
+    progress_id: str | None = None
+
+
+class JobSettingsIn(BaseModel):
+    """Per-job overrides. Anything omitted falls back to saved settings."""
+
+    provider: str | None = None
+    whisper_model: str | None = None
+    language: str | None = None
+    diarization: bool | None = None
+    min_duration_s: float | None = Field(default=None, gt=0)
+    max_duration_s: float | None = Field(default=None, gt=0)
+    max_clips: int | None = Field(default=None, ge=1, le=50)
+    caption_style: str | None = None
+    ratio: Literal["9:16", "1:1", "16:9"] | None = None
+    #: Auto-edit switches (None = use saved defaults).
+    trim_silence: bool | None = None
+    remove_fillers: bool | None = None
+    punch_zoom: bool | None = None
+    keyword_emphasis: bool | None = None
+    progress_bar: bool | None = None
+    normalize_audio: bool | None = None
+    background_music: bool | None = None
+    burn_captions: bool | None = None
+
+
+RejectReason = Literal[
+    "ad_or_announcement", "boring_no_story", "bad_framing", "product_not_visible", "other"
+]
+
+
+class JobCreateIn(BaseModel):
+    source_id: str
+    #: Free-text campaign brief from the client (truncated to ~3000 chars).
+    brief: str = ""
+    #: Template name, or "auto" to pick from the content.
+    template: str = "auto"
+    #: Content profile name, or "" / "auto" to choose from the brief and the source.
+    profile: str = ""
+    settings: JobSettingsIn = Field(default_factory=JobSettingsIn)
+
+
+class JobOut(BaseModel):
+    id: str
+    source_id: str
+    status: str
+    current_stage: str
+    progress: float
+    error: str | None = None
+    provider: str
+    created_at: str
+    updated_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    activity: str = ""
+    heartbeat_at: str | None = None
+    activity_log: list[dict[str, Any]] = []
+    source: SourceOut | None = None
+    brief: str = ""
+    #: Extracted campaign rules (see clipstudio.campaign), if the job has a brief.
+    campaign: dict[str, Any] | None = None
+    #: Set while a "generate more clips" run is queued/running.
+    more_count: int | None = None
+    #: Content profile chosen for the job (film / talking / event / gaming), once known.
+    profile: str = ""
+    #: False when the job renders without word captions (footage already subtitled).
+    burn_captions: bool = True
+
+    @classmethod
+    def of(cls, job: models.Job, source: models.Source | None = None) -> JobOut:
+        return cls(
+            id=job.id,
+            source_id=job.source_id,
+            status=job.status,
+            current_stage=job.current_stage,
+            progress=job.progress,
+            error=job.error,
+            provider=job.provider,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+            activity=job.activity,
+            heartbeat_at=job.heartbeat_at,
+            activity_log=job.activity_log,
+            source=SourceOut.of(source) if source else None,
+            brief=str(job.settings.get("brief") or ""),
+            campaign=job.settings.get("campaign") or None,
+            more_count=(job.settings.get("more") or {}).get("count"),
+            profile=str(job.settings.get("profile") or ""),
+            burn_captions=bool((job.settings.get("edit") or {}).get("burn_captions", True)),
+        )
+
+
+class MoreClipsIn(BaseModel):
+    count: int = Field(default=5, ge=1, le=30)
+
+
+class WordOut(BaseModel):
+    text: str
+    start: float
+    end: float
+    speaker: str | None = None
+
+
+class ExportOut(BaseModel):
+    id: str
+    clip_id: str
+    ratio: str
+    style: str
+    size_bytes: int
+    created_at: str
+    download_url: str
+
+    @classmethod
+    def of(cls, export: models.Export) -> ExportOut:
+        return cls(
+            id=export.id,
+            clip_id=export.clip_id,
+            ratio=export.ratio,
+            style=export.style,
+            size_bytes=export.size_bytes,
+            created_at=export.created_at,
+            download_url=f"/api/exports/{export.id}/download",
+        )
+
+
+class ClipOut(BaseModel):
+    id: str
+    job_id: str
+    rank: int
+    start_s: float
+    end_s: float
+    duration_s: float
+    start_word: int
+    end_word: int
+    title: str
+    hook: str
+    score: int
+    reason: str
+    status: str
+    user_trimmed: bool
+    description: str = ""
+    hashtags: list[str] = Field(default_factory=list)
+    llm_score: int = 0
+    heuristic_score: int = 0
+    reject_reason: str = ""
+    reject_note: str = ""
+    caption_style: str = "yellow_pop"
+    ratio: str = "9:16"
+    exports: list[ExportOut] = Field(default_factory=list)
+
+    @classmethod
+    def of(
+        cls,
+        clip: models.Clip,
+        *,
+        edit: models.ClipEdit | None = None,
+        exports: list[models.Export] | None = None,
+    ) -> ClipOut:
+        return cls(
+            id=clip.id,
+            job_id=clip.job_id,
+            rank=clip.rank,
+            start_s=clip.start_s,
+            end_s=clip.end_s,
+            duration_s=clip.duration_s,
+            start_word=clip.start_word,
+            end_word=clip.end_word,
+            title=clip.title,
+            hook=clip.hook,
+            score=clip.score,
+            reason=clip.reason,
+            status=clip.status,
+            user_trimmed=clip.user_trimmed,
+            description=clip.description,
+            hashtags=clip.hashtags,
+            llm_score=clip.llm_score,
+            heuristic_score=clip.heuristic_score,
+            reject_reason=clip.reject_reason,
+            reject_note=clip.reject_note,
+            caption_style=edit.caption_style if edit else "yellow_pop",
+            ratio=edit.ratio if edit else "9:16",
+            exports=[ExportOut.of(e) for e in (exports or [])],
+        )
+
+
+class ClipPatchIn(BaseModel):
+    start_s: float | None = Field(default=None, ge=0)
+    end_s: float | None = Field(default=None, gt=0)
+    title: str | None = None
+    description: str | None = None
+    hashtags: list[str] | None = None
+    status: Literal["candidate", "kept", "discarded", "exported"] | None = None
+    #: Optional why-rejected tag; only meaningful on a discarded clip.
+    reject_reason: RejectReason | None = None
+    reject_note: str | None = Field(default=None, max_length=500)
+
+
+class CaptionPatchIn(BaseModel):
+    """Word-level caption edits for one clip."""
+
+    words: list[WordOut] | None = None
+    caption_style: str | None = None
+    ratio: Literal["9:16", "1:1", "16:9"] | None = None
+
+
+class ExportRequestIn(BaseModel):
+    ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
+    style: str = "yellow_pop"
+    write_srt: bool = False
+
+
+class CaptionStyleOut(BaseModel):
+    key: str
+    label: str
+    description: str
+    #: Enough for the UI to approximate the look in HTML/CSS before rendering.
+    preview: dict[str, Any]
+
+
+class ProviderStatusOut(BaseModel):
+    name: str
+    available: bool
+    detail: str = ""
+    models: list[str] = Field(default_factory=list)
+    requires_key: bool = True
+    has_key: bool = False
+
+
+class SettingsOut(BaseModel):
+    active_provider: str
+    providers: dict[str, dict[str, Any]]
+    whisper: dict[str, Any]
+    clips: dict[str, Any]
+    ingest: dict[str, Any]
+    export: dict[str, Any]
+    edit: dict[str, Any] = Field(default_factory=dict)
+    light: dict[str, Any] = Field(default_factory=dict)
+    insecure_secret_storage: bool
+    #: Which providers have a key stored. The keys themselves never leave the
+    #: keyring, so the UI shows presence, not value.
+    keys_present: dict[str, bool] = Field(default_factory=dict)
+
+
+class SettingsIn(BaseModel):
+    active_provider: str | None = None
+    providers: dict[str, dict[str, Any]] | None = None
+    whisper: dict[str, Any] | None = None
+    clips: dict[str, Any] | None = None
+    ingest: dict[str, Any] | None = None
+    export: dict[str, Any] | None = None
+    edit: dict[str, Any] | None = None
+    light: dict[str, Any] | None = None
+
+
+class SecretIn(BaseModel):
+    key: str
+    value: str
+
+
+class SetupStepOut(BaseModel):
+    """One API key the app needs (or can use), for the first-run screen."""
+
+    key: str
+    label: str
+    purpose: str
+    required: bool
+    present: bool
+    #: Masked tail of the stored key; the full key is never returned.
+    preview: str | None = None
+    get_url: str
+
+
+class SetupStatusOut(BaseModel):
+    #: True once every required key is present.
+    ready: bool
+    steps: list[SetupStepOut]
+
+
+class ValidateKeyIn(BaseModel):
+    key: str
+    #: The key to test. Omitted -> test the key that is already stored.
+    value: str | None = None
+
+
+class ValidateKeyOut(BaseModel):
+    ok: bool
+    message: str
+
+
+class SystemOut(BaseModel):
+    ready: bool
+    python_version: str
+    platform: str
+    ffmpeg_version: str | None
+    has_libass: bool
+    nvenc_works: bool
+    accel: str
+    gpu_name: str | None
+    compute_type: str
+    diarization_available: bool

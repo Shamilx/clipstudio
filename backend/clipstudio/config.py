@@ -1,0 +1,331 @@
+"""Settings persistence and secret storage.
+
+Non-secret settings live in ``<root>/config.json`` as plain JSON so users can
+hand-edit them. Secrets (LLM API keys, the HuggingFace token) are kept out of
+that file and stored in the OS keyring — Credential Manager on Windows, Keychain
+on macOS, Secret Service on Linux.
+
+If no keyring backend is available (headless Linux, some Docker images), we fall
+back to writing secrets into ``config.json`` with restrictive permissions and
+set :attr:`Settings.insecure_secret_storage` so the UI and ``clipstudio doctor``
+can warn about it. Silently downgrading security without telling the user is the
+thing we're trying to avoid.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import os
+import stat
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, PrivateAttr
+
+from . import paths
+
+log = logging.getLogger(__name__)
+
+KEYRING_SERVICE = "clipstudio"
+
+#: Keyring services used by earlier releases. Read from as a fallback so keys
+#: stored under an old name aren't silently lost; writes always use the new one.
+LEGACY_KEYRING_SERVICES: tuple[str, ...] = ("autoclip", "clipforge")
+
+ProviderName = Literal["anthropic", "openai", "gemini", "ollama"]
+
+#: NVIDIA's hosted OpenAI-compatible endpoint — ClipStudio's default LLM.
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+#: Groq's hosted Whisper endpoint — ClipStudio's default transcription.
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+#: Secret key for Groq (transcription); not an LLM provider.
+GROQ_KEY = "groq"
+#: Secret key for NVIDIA build (the default LLM and vision endpoint).
+NVIDIA_KEY = "nvidia"
+#: Model used on the NVIDIA endpoint when NVIDIA_MODEL is not set.
+DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+
+#: Providers that authenticate with an API key. Ollama runs locally and needs none.
+KEYED_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini")
+
+#: Extra secrets that aren't tied to a provider.
+HF_TOKEN_KEY = "huggingface_token"
+
+
+class ProviderSettings(BaseModel):
+    """Per-provider configuration. The API key itself is never stored here."""
+
+    model: str = ""
+    #: Only meaningful for the OpenAI-compatible provider. Pointing this at
+    #: OpenRouter, Groq, DeepSeek, or a local LM Studio server is the supported
+    #: way to use any other vendor.
+    base_url: str | None = None
+
+
+class WhisperSettings(BaseModel):
+    #: "groq" (hosted, default) or "local" (faster-whisper, optional extra).
+    backend: Literal["groq", "local"] = "groq"
+    groq_model: str = "whisper-large-v3-turbo"
+    #: Local backend only: tiny | base | small | medium | large-v3 — or a path.
+    model: str = "small"
+    #: Force a CTranslate2 compute type. Empty means "let hardware detection pick".
+    compute_type: str = ""
+    #: ISO 639-1 code, or empty for auto-detection.
+    language: str = ""
+    #: Run WhisperX diarization to label words by speaker. Needs the
+    #: ``diarization`` extra and a HuggingFace token.
+    diarization: bool = False
+
+
+class ClipSettings(BaseModel):
+    min_duration_s: float = 20.0
+    max_duration_s: float = 60.0
+    max_clips: int = 10
+    #: Clips below this blended score are dropped, except the best ``min_keep``.
+    quality_threshold: float = 55.0
+    min_keep: int = 5
+    #: Share of the cheap heuristic pre-score in the final score (0..1).
+    heuristic_weight: float = 0.2
+
+
+class EditSettings(BaseModel):
+    """Automatic editing — every switch can also be set per job."""
+
+    trim_silence: bool = True
+    remove_fillers: bool = True
+    punch_zoom: bool = True
+    keyword_emphasis: bool = True
+    progress_bar: bool = True
+    normalize_audio: bool = True
+    #: Needs royalty-free tracks in the music/ folder.
+    background_music: bool = False
+    #: Burn word captions. Off for footage that already has subtitles (hook card stays).
+    burn_captions: bool = True
+    music_volume: float = 0.12
+    #: A pause longer than this is shortened.
+    max_pause_s: float = 0.5
+    #: Silence kept on each side of a cut.
+    pause_pad_s: float = 0.14
+    filler_words: list[str] = Field(
+        default_factory=lambda: [
+            "um", "uh", "uhm", "umm", "er", "erm", "hmm", "mm", "mhm", "ah",
+            "ee", "eee", "əə", "əəə", "ıı", "ııı", "ммм", "эээ", "ээ",
+        ]  # fmt: skip
+    )
+
+
+class LightSettings(BaseModel):
+    """Cost levers for weak computers."""
+
+    #: Face-detection sampling rate. Faces barely move; 2-3 fps is plenty.
+    face_sample_fps: float = 2.5
+    #: Frames are shrunk to this width before MediaPipe / scene detection.
+    analysis_width: int = 480
+
+
+class IngestSettings(BaseModel):
+    #: yt-dlp format selector. Capped at 720p with h264 (avc1) preferred: shorts render
+    #: at 720 wide, h264 decodes several times cheaper than vp9/av1 on a weak CPU, and
+    #: the download is a fraction of the size.
+    ytdlp_format: str = (
+        "bestvideo[height<=720][vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]"
+        "/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]"
+        "/best[height<=720][ext=mp4]/best[height<=720]/best"
+    )
+    #: Browser to pull YouTube cookies from ("chrome", "firefox", "edge", ...).
+    #: As of 2026 most anonymous YouTube downloads hit a bot check that only
+    #: browser cookies reliably clear, so this is a first-class setting.
+    cookies_from_browser: str = ""
+    #: Offer YouTube's own auto-captions as a fast path, skipping Whisper.
+    prefer_youtube_captions: bool = False
+
+
+class ExportSettings(BaseModel):
+    ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
+    caption_style: str = "yellow_pop"
+    #: Integrated loudness target in LUFS. -14 is the de-facto platform standard.
+    loudness_lufs: float = -14.0
+    #: Use h264_nvenc when the hardware supports it. Falls back to libx264.
+    #: Off by default: the target machine has no NVENC.
+    prefer_hardware_encoder: bool = False
+    crf: int = 23
+    x264_preset: str = "veryfast"
+    #: Also write a .srt sidecar next to each exported clip.
+    write_srt: bool = False
+
+
+class Settings(BaseModel):
+    """Top-level persisted settings."""
+
+    active_provider: ProviderName = "openai"
+    providers: dict[str, ProviderSettings] = Field(
+        default_factory=lambda: {
+            "anthropic": ProviderSettings(model="claude-sonnet-5"),
+            # Empty model = use NVIDIA_MODEL from .env.
+            "openai": ProviderSettings(model="", base_url=NVIDIA_BASE_URL),
+            "gemini": ProviderSettings(model="gemini-2.0-flash"),
+            "ollama": ProviderSettings(model="", base_url="http://localhost:11434"),
+        }
+    )
+    whisper: WhisperSettings = Field(default_factory=WhisperSettings)
+    clips: ClipSettings = Field(default_factory=ClipSettings)
+    ingest: IngestSettings = Field(default_factory=IngestSettings)
+    export: ExportSettings = Field(default_factory=ExportSettings)
+    edit: EditSettings = Field(default_factory=EditSettings)
+    light: LightSettings = Field(default_factory=LightSettings)
+    #: Describe video frames with a vision model so clip selection also sees
+    #: speech-less moments (runway walks, reactions, outfits).
+    visual_enabled: bool = True
+
+    #: Set when secrets had to be written to config.json because no keyring
+    #: backend was usable. Surfaced as a warning in the UI and in `doctor`.
+    insecure_secret_storage: bool = False
+    #: Plaintext secret fallback. Empty whenever the keyring is working.
+    #: A private attribute so it never round-trips through the public schema —
+    #: `save()` writes it back explicitly.
+    _fallback_secrets: dict[str, str] = PrivateAttr(default_factory=dict)
+
+    model_config = {"extra": "ignore"}
+
+    def provider(self, name: str | None = None) -> ProviderSettings:
+        """Return settings for ``name``, defaulting to the active provider."""
+        key = name or self.active_provider
+        return self.providers.setdefault(key, ProviderSettings())
+
+
+def load() -> Settings:
+    """Read settings from disk, falling back to defaults on a missing or bad file."""
+    path = paths.config_path()
+    if not path.exists():
+        return Settings()
+    try:
+        raw: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("Could not read %s (%s); falling back to defaults.", path, exc)
+        return Settings()
+
+    fallback = raw.pop("_fallback_secrets", {}) or {}
+    settings = Settings.model_validate(raw)
+    settings._fallback_secrets = fallback
+    return settings
+
+
+def save(settings: Settings) -> None:
+    """Write settings to disk atomically, with owner-only permissions."""
+    paths.ensure_layout()
+    path = paths.config_path()
+
+    payload = settings.model_dump(mode="json")
+    if settings._fallback_secrets:
+        payload["_fallback_secrets"] = settings._fallback_secrets
+
+    # Write to a sibling temp file then replace, so an interrupted write can
+    # never leave a truncated config behind.
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _restrict_permissions(tmp)
+    os.replace(tmp, path)
+
+
+def _restrict_permissions(path: Path) -> None:
+    """Best-effort chmod 600. A no-op where the platform doesn't support it."""
+    with contextlib.suppress(OSError):  # platform dependent
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+# --------------------------------------------------------------------------
+# Secrets
+# --------------------------------------------------------------------------
+
+
+def _keyring():
+    """Return a usable keyring module, or None if no backend works.
+
+    Importing ``keyring`` succeeds even with no backend; the failure only shows
+    up on first use, so we probe explicitly.
+    """
+    try:
+        import keyring
+        from keyring.backends.fail import Keyring as FailKeyring
+    except ImportError:  # pragma: no cover - keyring is a hard dependency
+        return None
+
+    try:
+        if isinstance(keyring.get_keyring(), FailKeyring):
+            return None
+    except Exception:  # pragma: no cover - backend probing can raise anything
+        return None
+    return keyring
+
+
+def get_secret(key: str, settings: Settings | None = None) -> str | None:
+    """Return a stored secret, or None if unset.
+
+    ``key`` is a provider name for API keys, or :data:`HF_TOKEN_KEY`.
+    """
+    env_override = paths.env_value(
+        f"CLIPSTUDIO_{key.upper()}_KEY", f"AUTOCLIP_{key.upper()}_KEY"
+    )
+    if env_override:
+        return env_override
+    if key == GROQ_KEY and os.environ.get("GROQ_API_KEY"):
+        return os.environ["GROQ_API_KEY"]
+
+    kr = _keyring()
+    if kr is not None:
+        for service in (KEYRING_SERVICE, *LEGACY_KEYRING_SERVICES):
+            try:
+                value = kr.get_password(service, key)
+                if value:
+                    return value
+            except Exception as exc:  # pragma: no cover - backend dependent
+                log.warning("Keyring read failed for %s: %s", key, exc)
+
+    settings = settings if settings is not None else load()
+    return settings._fallback_secrets.get(key) or None
+
+
+def nvidia_api_key(settings: Settings | None = None) -> str:
+    """NVIDIA API key: ``NVIDIA_API_KEY`` from the environment/.env, else the stored secret."""
+    return os.environ.get("NVIDIA_API_KEY") or get_secret(NVIDIA_KEY, settings) or ""
+
+
+def set_secret(key: str, value: str, settings: Settings | None = None) -> bool:
+    """Store a secret. Returns True if it went to the keyring, False if to disk.
+
+    A False return is not an error — it means the caller should surface the
+    insecure-storage warning to the user.
+    """
+    kr = _keyring()
+    if kr is not None:
+        try:
+            kr.set_password(KEYRING_SERVICE, key, value)
+            return True
+        except Exception as exc:  # pragma: no cover - backend dependent
+            log.warning("Keyring write failed for %s: %s", key, exc)
+
+    settings = settings if settings is not None else load()
+    settings._fallback_secrets[key] = value
+    settings.insecure_secret_storage = True
+    save(settings)
+    return False
+
+
+def delete_secret(key: str, settings: Settings | None = None) -> None:
+    """Remove a secret from both the keyring and the plaintext fallback."""
+    kr = _keyring()
+    if kr is not None:
+        # Backends raise when the entry is absent; deleting a missing secret is
+        # not an error from the caller's point of view. Both services are cleared
+        # so a delete can't leave a pre-rename copy behind to resurface.
+        for service in (KEYRING_SERVICE, *LEGACY_KEYRING_SERVICES):
+            with contextlib.suppress(Exception):
+                kr.delete_password(service, key)
+
+    settings = settings if settings is not None else load()
+    if settings._fallback_secrets.pop(key, None) is not None:
+        settings.insecure_secret_storage = bool(settings._fallback_secrets)
+        save(settings)
